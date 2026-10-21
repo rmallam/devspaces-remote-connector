@@ -10,7 +10,8 @@ import { NamespaceApi } from '../kubernetes/NamespaceApi';
 import { WorkspaceManager } from '../workspace/WorkspaceManager';
 import { WorkspaceTreeProvider } from '../ui/WorkspaceTreeProvider';
 import { ClusterManager } from './ClusterManager';
-import { ConsoleLinkList } from '../kubernetes/DevWorkspaceTypes';
+import { STATE_CLUSTER_DISPLAY_URL, STATE_CLUSTER_URL } from '../constants';
+import { chooseDevSpacesUrl, readDevSpacesUrlSources } from '../auth/devSpacesUrl';
 
 const AUTO_REFRESH_INTERVAL = 15_000; // 15 seconds
 
@@ -111,24 +112,18 @@ export class ClusterSessionManager {
   }
 
   private async discoverDevSpacesUrl(kubeConfig: k8s.KubeConfig, fallbackUrl: string): Promise<string> {
-    try {
-      const customApi = kubeConfig.makeApiClient(k8s.CustomObjectsApi);
-      const consoleLinks = await customApi.listClusterCustomObject({
-        group: 'console.openshift.io', version: 'v1', plural: 'consolelinks',
-      }) as ConsoleLinkList;
-      const devSpacesLink = consoleLinks?.items?.find((link) =>
-        link.metadata?.name?.includes('che') || link.metadata?.name?.includes('devspaces') ||
-        link.spec?.href?.includes('devspaces') || link.spec?.href?.includes('codeready')
-      );
-      if (devSpacesLink?.spec?.href) {
-        const discovered = devSpacesLink.spec.href.replace(/\/+$/, '');
-        this.logger.info(`Discovered DevSpaces URL from ConsoleLink: ${discovered}`);
-        return discovered;
-      }
-    } catch {
-      // ConsoleLink query failed — use fallback
+    const customApi = kubeConfig.makeApiClient(k8s.CustomObjectsApi);
+    const sources = await readDevSpacesUrlSources(
+      customApi,
+      (message) => this.logger.debug(message),
+    );
+    const chosen = chooseDevSpacesUrl(sources, fallbackUrl);
+    this.logger.info(`Dev Spaces URL from ${chosen.source}: ${chosen.url}`);
+    if (chosen.source !== 'fallback') {
+      await this.context.globalState.update(STATE_CLUSTER_URL, chosen.url);
+      await this.context.globalState.update(STATE_CLUSTER_DISPLAY_URL, chosen.url);
     }
-    return fallbackUrl;
+    return chosen.url;
   }
 
   private createWorkspaceManager(kubeConfig: k8s.KubeConfig, clusterId: string, devSpacesUrl: string, accessToken: string): WorkspaceManager {

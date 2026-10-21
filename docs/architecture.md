@@ -45,7 +45,7 @@ graph TB
 - **`WorkspaceModel`** carries a `clusterId` — every workspace knows which cluster it belongs to. No scanning required.
 - **`KubeClientFactory`** is stateless — each operation builds its own `KubeConfig` from the cluster's `apiUrl` + token. No shared state between clusters.
 - **`ClusterSessionManager`** manages per-cluster workspace sessions, each with its own API clients and refresh interval.
-- **ConsoleLink discovery** — after auth, queries OpenShift `ConsoleLink` CRs to find the real DevSpaces URL (handles custom domains/CNAMEs).
+- **Dashboard URL** — after auth, reads CheCluster `status.cheURL` (the shared-ingress route), then the Dev Spaces route, then the OpenShift `ConsoleLink`. A URL guessed from the API server name is only a fallback.
 - **Token storage** — tokens are keyed by `appsDomain` (the cluster's stable identifier), so any URL from the same cluster resolves to the same token.
 
 ## Authentication Flow

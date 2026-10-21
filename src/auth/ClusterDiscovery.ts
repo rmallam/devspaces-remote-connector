@@ -91,12 +91,48 @@ export class ClusterDiscovery {
   }
 
   /**
-   * Build the DevSpaces dashboard URL from the apps domain.
+   * Provisional dashboard URL from whatever the user typed.
+   *
+   * A dashboard, console, or CNAME host is kept as-is so a shared ingress is
+   * not rewritten. An API server host is not a dashboard: the provisional
+   * value is `https://devspaces.<apps-domain>`, and ClusterSessionManager
+   * replaces it with the CheCluster route after login.
    */
   buildDevSpacesUrl(baseUrl: string): string {
-    // This used to be `https://devspaces.${appsDomain}`
-    // But this is incorrect, so just reuse cluster URL
-    return baseUrl;
+    const normalized = this.normalizeInputUrl(baseUrl);
+    let hostname: string;
+    try {
+      hostname = new URL(normalized).hostname;
+    } catch {
+      return normalized;
+    }
+    if (!hostname.startsWith('api.')) {
+      return normalized;
+    }
+
+    const clusterDomain = hostname.slice('api.'.length);
+    // ROSA publishes routes on apps.rosa.<cluster>, not apps.<cluster>.
+    // A cluster name that merely begins with "rosa-" still needs that label.
+    const appsDomain = clusterDomain.endsWith('.openshiftapps.com') && !clusterDomain.startsWith('rosa.')
+      ? `apps.rosa.${clusterDomain}`
+      : `apps.${clusterDomain}`;
+    return `https://devspaces.${appsDomain}`;
+  }
+
+  /**
+   * Keep an API server URL the user pasted. Guessing the API from the apps
+   * domain drops the port and, on ROSA, the `apps.rosa` label.
+   */
+  resolveApiUrl(inputUrl: string, discoveredApiUrl: string): string {
+    const normalized = this.normalizeInputUrl(inputUrl);
+    try {
+      if (new URL(normalized).hostname.startsWith('api.')) {
+        return normalized;
+      }
+    } catch {
+      // Fall through to the discovered API server.
+    }
+    return discoveredApiUrl;
   }
 
   /**
@@ -114,7 +150,17 @@ export class ClusterDiscovery {
       appsDomain = await this.discoverAppsDomainViaRedirect(baseUrl);
     }
 
-    const apiUrl = await this.buildKubeAPIServerURL(appsDomain);
+    // An API URL the user typed is already the Kubernetes server. Do not replace
+    // it with a host guessed from the apps domain.
+    const pastedApi = this.resolveApiUrl(baseUrl, '');
+    let apiUrl: string;
+    if (pastedApi) {
+      apiUrl = pastedApi;
+    } else if (!appsDomain) {
+      throw new Error(`Could not determine the apps domain for ${baseUrl}`);
+    } else {
+      apiUrl = await this.buildKubeAPIServerURL(appsDomain);
+    }
     const devSpacesUrl = this.buildDevSpacesUrl(baseUrl);
 
     this.logger.debug(`Apps domain: ${appsDomain}`);
