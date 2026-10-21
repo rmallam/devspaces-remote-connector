@@ -143,6 +143,23 @@ describe('resolverCallbacks', () => {
       };
     });
 
+    it('uses the stored API server for a shared-ingress dashboard', async () => {
+      mockGlobalState.get.mockReturnValue([{
+        id: 'shared',
+        apiUrl: 'https://api.real.example.com:6443',
+        devSpacesUrl: 'https://devspaces.apps.shared.example.com',
+        appsDomain: 'apps.real.example.com',
+      }]);
+      mockCustomApi.getNamespacedCustomObject.mockResolvedValue({ status: { phase: 'Running' } });
+
+      const check = createCheckAndStartWorkspace(mockGlobalState, mockTokenManager as any, mockKubeFactory as any, mockClusterDiscovery as any);
+      const result = await check('https://devspaces.apps.shared.example.com', 'user-devspaces', 'empty');
+
+      expect(result).toBe('running');
+      expect(mockClusterDiscovery.discover).not.toHaveBeenCalled();
+      expect(mockKubeFactory.createConfig).toHaveBeenCalledWith('https://api.real.example.com:6443', 'sha256~token');
+    });
+
     it('returns auth_failed when no token available', async () => {
       mockTokenManager.getToken.mockResolvedValue(undefined);
       mockTokenManager.isTokenValid.mockReturnValue(false);

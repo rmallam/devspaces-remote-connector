@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Logger } from '../util/Logger';
 import { ClusterDiscovery } from '../auth/ClusterDiscovery';
 import { STATE_CLUSTER_URL, STATE_CLUSTER_DISPLAY_URL } from '../constants';
+import { CLUSTERS_STATE_KEY } from '../kubernetes/knownApiUrl';
 
 /**
  * A registered DevSpaces cluster with all resolved endpoints.
@@ -23,7 +24,7 @@ export interface ClusterEntry {
   username?: string;
 }
 
-const STORAGE_KEY = 'devspaces.clusters';
+const STORAGE_KEY = CLUSTERS_STATE_KEY;
 
 /**
  * Manages the list of registered DevSpaces clusters.

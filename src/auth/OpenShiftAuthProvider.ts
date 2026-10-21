@@ -3,6 +3,7 @@ import { Logger } from '../util/Logger';
 import { TokenManager, StoredToken } from './TokenManager';
 import { OAuthFlow } from './OAuthFlow';
 import { ClusterDiscovery, ClusterEndpoints } from './ClusterDiscovery';
+import { CLUSTERS_STATE_KEY, KnownCluster, lookupKnownApiUrl } from '../kubernetes/knownApiUrl';
 import { getJson } from '../util/httpClient';
 import {
   CTX_AUTHENTICATED,
@@ -127,8 +128,9 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
       throw new Error('Sign-in cancelled: no cluster URL provided');
     }
 
-    // Discover cluster endpoints
-    this.endpoints = await this.clusterDiscovery.discover(clusterUrl);
+    // Discover cluster endpoints. A later reconnect stores the shared-ingress
+    // dashboard in place of the API URL the user typed; keep using that API.
+    this.endpoints = await this.clusterDiscovery.discover(this.urlToDiscover(clusterUrl));
 
     // Execute OAuth authorization code flow with PKCE (same as `oc login --web`)
     const { accessToken, expiresIn } = await this.oauthFlow.execute(
@@ -258,12 +260,22 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     }
 
     try {
-      this.endpoints = await this.clusterDiscovery.discover(clusterUrl);
+      this.endpoints = await this.clusterDiscovery.discover(this.urlToDiscover(clusterUrl));
       await vscode.commands.executeCommand('setContext', CTX_AUTHENTICATED, true);
       this.logger.info(`Restored session for ${clusterUrl}`);
     } catch (err) {
       this.logger.warn(`Failed to restore session: ${err}`);
     }
+  }
+
+  /**
+   * API server saved at sign-in.
+   * Guessing it from a shared-ingress dashboard host hangs or targets a server
+   * that does not exist, and activation waits on that lookup.
+   */
+  private urlToDiscover(clusterUrl: string): string {
+    const clusters = this.context.globalState.get<KnownCluster[]>(CLUSTERS_STATE_KEY);
+    return lookupKnownApiUrl(clusters, clusterUrl) || clusterUrl;
   }
 
   private storeClusterUrl(url: string): void {

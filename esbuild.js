@@ -1,5 +1,8 @@
 const esbuild = require('esbuild');
+const fs = require('fs');
+const path = require('path');
 const { execSync } = require('child_process');
+const { stripNavigatorProbe } = require('./scripts/strip-navigator-probe');
 
 // Get BUILD_COMMIT value (same logic as webpack)
 function getBuildCommit() {
@@ -21,6 +24,22 @@ function getBuildCommit() {
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
 
+// Drop oauth4webapi / openid-client's `navigator` probe. Reading that global
+// in the VS Code extension host logs PendingMigrationError while connecting.
+const stripNavigatorPlugin = {
+  name: 'strip-navigator-probe',
+  setup(build) {
+    build.onLoad({ filter: /(?:oauth4webapi|openid-client)[/\\]build[/\\]index\.js$/ }, async (args) => {
+      const contents = await fs.promises.readFile(args.path, 'utf8');
+      return {
+        contents: stripNavigatorProbe(contents),
+        loader: 'js',
+        resolveDir: path.dirname(args.path),
+      };
+    });
+  },
+};
+
 async function main() {
   if (watch) {
     const ctx = await esbuild.context({
@@ -36,6 +55,7 @@ async function main() {
       define: {
         'BUILD_COMMIT': JSON.stringify(getBuildCommit())
       },
+      plugins: [stripNavigatorPlugin],
       logLevel: 'info',
     });
     await ctx.watch();
@@ -54,6 +74,7 @@ async function main() {
       define: {
         'BUILD_COMMIT': JSON.stringify(getBuildCommit())
       },
+      plugins: [stripNavigatorPlugin],
       logLevel: 'info',
     });
   }

@@ -4,12 +4,13 @@ import * as net from 'net';
 import * as jsYaml from 'js-yaml';
 import { Logger } from '../util/Logger';
 import { TokenManager } from '../auth/TokenManager';
-import { ClusterDiscovery, ClusterEndpoints } from '../auth/ClusterDiscovery';
+import { ClusterDiscovery } from '../auth/ClusterDiscovery';
 import { KubeClientFactory } from '../kubernetes/KubeClientFactory';
 import { KubeAuthHelper, findWorkspacePodAndContainer, getDevWorkspacePhase } from '../kubernetes/KubeAuthHelper';
 import { DevWorkspaceResource } from '../kubernetes/DevWorkspaceTypes';
 import { execOnPod } from '../kubernetes/execHelper';
 import { SIDECAR_PREFIXES, DW_API_GROUP, DW_API_VERSION, DW_PLURAL, STATE_ACTIVE_CONNECTION, LABEL_DEVWORKSPACE_ID, MACHINE_EXEC_PORT } from '../constants';
+import { CLUSTERS_STATE_KEY, KnownCluster, lookupKnownApiUrl } from '../kubernetes/knownApiUrl';
 import { OpenShiftAuthProvider } from '../auth/OpenShiftAuthProvider';
 import { ActivityTrackerService } from '../remote/ActivityTrackerService';
 
@@ -39,7 +40,8 @@ export function registerRemoteCommands(
   const authHelper = new KubeAuthHelper(tokenManager, clusterDiscovery, kubeClientFactory);
 
   async function getKubeConfig(): Promise<k8s.KubeConfig> {
-    return authHelper.requireKubeConfig(conn.clusterUrl);
+    const knownApi = lookupKnownApiUrl(storedClusters(context.globalState), conn.clusterUrl);
+    return authHelper.requireKubeConfig(conn.clusterUrl, [], knownApi);
   }
 
   function getCustomApi(kc: k8s.KubeConfig): k8s.CustomObjectsApi {
@@ -239,14 +241,15 @@ export async function track(events: vscode.Event<any>[], logger: Logger, context
   }
 
   const clusterDiscovery: ClusterDiscovery = new ClusterDiscovery();
-  const endpoints: ClusterEndpoints = await clusterDiscovery.discover(activeConn.clusterUrl);
-  if (!endpoints) {
+  const knownApi = lookupKnownApiUrl(storedClusters(context.globalState), activeConn.clusterUrl);
+  const apiUrl = knownApi || (await clusterDiscovery.discover(activeConn.clusterUrl)).apiUrl;
+  if (!apiUrl) {
     logger.info(`Unable to retrieve cluster URL for active connection.`);
     return;
   }
 
   const kubeClientFactory = new KubeClientFactory();
-  const kubeConfig: k8s.KubeConfig = kubeClientFactory.createConfig(endpoints.apiUrl, await authProvider.getAccessToken());
+  const kubeConfig: k8s.KubeConfig = kubeClientFactory.createConfig(apiUrl, await authProvider.getAccessToken());
   const coreApi = kubeConfig.makeApiClient(k8s.CoreV1Api);
   const podList = await coreApi.listNamespacedPod({
     namespace: activeConn.namespace,
@@ -282,4 +285,8 @@ export async function track(events: vscode.Event<any>[], logger: Logger, context
       })
     );
   });
+}
+
+function storedClusters(globalState: { get<T>(key: string): T | undefined }): KnownCluster[] {
+  return globalState.get<KnownCluster[]>(CLUSTERS_STATE_KEY) ?? [];
 }

@@ -9,6 +9,7 @@ import {
   waitForWorkspacePhase,
 } from '../kubernetes/KubeAuthHelper';
 import { DW_API_GROUP, DW_API_VERSION, DW_PLURAL } from '../constants';
+import { CLUSTERS_STATE_KEY, KnownCluster, lookupKnownApiUrl } from '../kubernetes/knownApiUrl';
 import { DevWorkspaceResource } from '../kubernetes/DevWorkspaceTypes';
 
 const logger = Logger.getInstance();
@@ -26,7 +27,8 @@ export function createGetKubeConfig(
 
   return async (clusterUrl: string, extraKeys: string[] = []): Promise<k8s.KubeConfig | undefined> => {
     logger.debug(`Resolver getKubeConfig: clusterUrl=${clusterUrl}${extraKeys.length ? `, extraKeys=[${extraKeys.join(',')}]` : ''}`);
-    return helper.getKubeConfig(clusterUrl, extraKeys);
+    const knownApi = lookupKnownApiUrl(storedClusters(globalState), clusterUrl, extraKeys);
+    return helper.getKubeConfig(clusterUrl, extraKeys, knownApi);
   };
 }
 
@@ -61,11 +63,13 @@ export function createCheckAndStartWorkspace(
     extraKeys: string[] = []
   ): Promise<'running' | 'started' | 'failed' | 'auth_failed' | 'not_found'> => {
     try {
-      const accessToken = await helper.resolveToken(clusterUrl, extraKeys);
+      const knownApi = lookupKnownApiUrl(storedClusters(globalState), clusterUrl, extraKeys);
+      const tokenKeys = knownApi ? [...extraKeys, knownApi] : extraKeys;
+      const accessToken = await helper.resolveToken(clusterUrl, tokenKeys);
       if (!accessToken) { return 'auth_failed'; }
 
-      const endpoints = await clusterDiscovery.discover(clusterUrl);
-      const kubeConfig = kubeFactory.createConfig(endpoints.apiUrl, accessToken);
+      const apiUrl = knownApi || (await clusterDiscovery.discover(clusterUrl)).apiUrl;
+      const kubeConfig = kubeFactory.createConfig(apiUrl, accessToken);
       const customApi = kubeConfig.makeApiClient(k8s.CustomObjectsApi);
 
       let dw: DevWorkspaceResource;
@@ -126,6 +130,10 @@ export function createCheckAndStartWorkspace(
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
+
+function storedClusters(globalState: { get<T>(key: string): T | undefined }): KnownCluster[] {
+  return globalState.get<KnownCluster[]>(CLUSTERS_STATE_KEY) ?? [];
+}
 
 /**
  * Detect a 404 Not Found error from the Kubernetes client.

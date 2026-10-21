@@ -11,6 +11,7 @@ import { execFileSync } from 'child_process';
 import { lookup } from 'dns/promises';
 import { ClusterDiscovery } from './ClusterDiscovery';
 import { chooseDevSpacesUrl, readDevSpacesUrlSources, CustomObjectReader } from './devSpacesUrl';
+import { lookupKnownApiUrl } from '../kubernetes/knownApiUrl';
 
 const live = process.env.DEVSPACES_LIVE === '1';
 const describeLive = live ? describe : describe.skip;
@@ -52,6 +53,14 @@ describeLive('live Dev Spaces URL', () => {
     // Kubernetes API.
     expect([403, 404]).toContain(apiPath.status);
     expect(apiBody.includes('/dashboard/')).toBe(false);
+
+    // A reconnect passes the dashboard host. The API saved at sign-in is the
+    // server `oc` is using, not a host derived from that dashboard.
+    expect(lookupKnownApiUrl(
+      [{ id: 'lab', apiUrl: apiServer, devSpacesUrl: dashboard, appsDomain: 'apps.example.com' }],
+      dashboard,
+      ['lab'],
+    )).toBe(apiServer);
   });
 });
 

@@ -101,12 +101,29 @@ async function doRequest(opts: HttpRequestOptions, redirectCount: number): Promi
   const parsed = new URL(opts.url);
 
   return new Promise((resolve, reject) => {
+    const timeoutMs = opts.timeout ?? DEFAULT_TIMEOUT;
+    let settled = false;
+    let wall: ReturnType<typeof setTimeout> | undefined;
+
+    const succeed = (value: HttpResponse) => {
+      if (settled) { return; }
+      settled = true;
+      if (wall) { clearTimeout(wall); }
+      resolve(value);
+    };
+    const fail = (err: Error) => {
+      if (settled) { return; }
+      settled = true;
+      if (wall) { clearTimeout(wall); }
+      reject(err);
+    };
+
     const reqOptions: https.RequestOptions = {
       hostname: parsed.hostname,
       port: parsed.port || 443,
       path: parsed.pathname + parsed.search,
       method: opts.method ?? 'GET',
-      timeout: opts.timeout ?? DEFAULT_TIMEOUT,
+      timeout: timeoutMs,
       agent: getAgent(),
       headers: {
         Accept: 'application/json',
@@ -117,12 +134,15 @@ async function doRequest(opts: HttpRequestOptions, redirectCount: number): Promi
     const req = https.request(reqOptions, (res) => {
       // Handle redirects
       if (opts.followRedirects && res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        if (wall) { clearTimeout(wall); }
         if (redirectCount >= MAX_REDIRECTS) {
-          reject(new Error(`Too many redirects (max ${MAX_REDIRECTS})`));
+          fail(new Error(`Too many redirects (max ${MAX_REDIRECTS})`));
           res.resume();
           return;
         }
-        res.resume(); // Consume response body
+        // This request is done. The follow-up request has its own deadline.
+        settled = true;
+        res.resume();
         doRequest({ ...opts, url: res.headers.location }, redirectCount + 1)
           .then(resolve)
           .catch(reject);
@@ -134,7 +154,7 @@ async function doRequest(opts: HttpRequestOptions, redirectCount: number): Promi
         data += chunk.toString();
         if (data.length > MAX_RESPONSE_SIZE) {
           req.destroy();
-          reject(new Error('Response too large'));
+          fail(new Error('Response too large'));
         }
       });
 
@@ -147,11 +167,11 @@ async function doRequest(opts: HttpRequestOptions, redirectCount: number): Promi
         };
 
         if (statusCode >= 200 && statusCode < 300) {
-          resolve(response);
+          succeed(response);
         } else {
           const truncated = data.slice(0, 200);
           logger.debug(`HTTP ${statusCode} from ${opts.method ?? 'GET'} ${parsed.hostname}${parsed.pathname}: ${truncated}`);
-          reject(new HttpError(
+          fail(new HttpError(
             `HTTP ${statusCode}: ${truncated}`,
             statusCode,
             data,
@@ -161,13 +181,21 @@ async function doRequest(opts: HttpRequestOptions, redirectCount: number): Promi
       });
     });
 
+    // Socket timeout does not cover a DNS lookup or a TCP handshake that never
+    // completes. A shared ingress often blackholes the guessed console host,
+    // and the connection spinner waits until this returns.
+    wall = setTimeout(() => {
+      req.destroy();
+      fail(new Error(`Request to ${parsed.hostname} timed out`));
+    }, timeoutMs);
+
     req.on('error', (err) => {
-      reject(new Error(`Request to ${parsed.hostname} failed: ${err.message}`));
+      fail(new Error(`Request to ${parsed.hostname} failed: ${err.message}`));
     });
 
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error(`Request to ${parsed.hostname} timed out`));
+      fail(new Error(`Request to ${parsed.hostname} timed out`));
     });
 
     if (opts.body) {
