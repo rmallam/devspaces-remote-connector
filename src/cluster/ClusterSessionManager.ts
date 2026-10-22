@@ -12,6 +12,7 @@ import { WorkspaceTreeProvider } from '../ui/WorkspaceTreeProvider';
 import { ClusterManager } from './ClusterManager';
 import { STATE_CLUSTER_DISPLAY_URL, STATE_CLUSTER_URL } from '../constants';
 import { chooseDevSpacesUrl, readDevSpacesUrlSources } from '../auth/devSpacesUrl';
+import { KnownCluster, storedUrlNamesCluster } from '../kubernetes/knownApiUrl';
 
 const AUTO_REFRESH_INTERVAL = 15_000; // 15 seconds
 
@@ -60,7 +61,12 @@ export class ClusterSessionManager {
       if (!accessToken) { return undefined; }
 
       const kubeConfig = this.kubeClientFactory.createConfig(apiUrl, accessToken);
-      const resolvedDevSpacesUrl = await this.discoverDevSpacesUrl(kubeConfig, devSpacesUrl);
+      const resolvedDevSpacesUrl = await this.discoverDevSpacesUrl(kubeConfig, devSpacesUrl, {
+        id: clusterId,
+        apiUrl,
+        devSpacesUrl,
+        appsDomain,
+      }, clusterUrl);
 
       await this.clusterManager.updateCluster(clusterId, { apiUrl, devSpacesUrl: resolvedDevSpacesUrl, appsDomain });
 
@@ -111,7 +117,12 @@ export class ClusterSessionManager {
     return undefined;
   }
 
-  private async discoverDevSpacesUrl(kubeConfig: k8s.KubeConfig, fallbackUrl: string): Promise<string> {
+  private async discoverDevSpacesUrl(
+    kubeConfig: k8s.KubeConfig,
+    fallbackUrl: string,
+    cluster: KnownCluster,
+    clusterUrl: string,
+  ): Promise<string> {
     const customApi = kubeConfig.makeApiClient(k8s.CustomObjectsApi);
     const sources = await readDevSpacesUrlSources(
       customApi,
@@ -119,7 +130,8 @@ export class ClusterSessionManager {
     );
     const chosen = chooseDevSpacesUrl(sources, fallbackUrl);
     this.logger.info(`Dev Spaces URL from ${chosen.source}: ${chosen.url}`);
-    if (chosen.source !== 'fallback') {
+    const activeUrl = this.context.globalState.get<string>(STATE_CLUSTER_URL);
+    if (chosen.source !== 'fallback' && storedUrlNamesCluster(activeUrl, cluster, [clusterUrl, fallbackUrl])) {
       await this.context.globalState.update(STATE_CLUSTER_URL, chosen.url);
       await this.context.globalState.update(STATE_CLUSTER_DISPLAY_URL, chosen.url);
     }

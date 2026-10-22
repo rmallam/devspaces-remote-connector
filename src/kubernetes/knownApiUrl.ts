@@ -48,6 +48,35 @@ export function lookupKnownApiUrl(
   return undefined;
 }
 
+/**
+ * Whether a global cluster URL belongs to this cluster.
+ *
+ * Several clusters can initialize at once. Only the cluster that owns the
+ * stored active URL may replace it with its CheCluster dashboard.
+ */
+export function storedUrlNamesCluster(
+  storedUrl: string | undefined,
+  cluster: KnownCluster,
+  extraKeys: string[] = [],
+): boolean {
+  if (!storedUrl?.trim()) {
+    return false;
+  }
+  const wanted = new Set(identityKeys(storedUrl));
+  const fields = [cluster.apiUrl, cluster.devSpacesUrl, cluster.id, cluster.appsDomain, ...extraKeys];
+  for (const field of fields) {
+    if (!field) {
+      continue;
+    }
+    for (const key of identityKeys(field)) {
+      if (wanted.has(key)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function identityKeys(value: string): string[] {
   const trimmed = value.trim().replace(/\/+$/, '');
   if (!trimmed) {

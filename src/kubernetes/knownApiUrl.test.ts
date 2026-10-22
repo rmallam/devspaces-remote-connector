@@ -1,4 +1,4 @@
-import { lookupKnownApiUrl } from './knownApiUrl';
+import { lookupKnownApiUrl, storedUrlNamesCluster } from './knownApiUrl';
 
 const API = 'https://api.cluster.example.com:6443';
 const SHARED = 'https://devspaces.apps.shared.example.com';
@@ -22,6 +22,34 @@ describe('lookupKnownApiUrl', () => {
   it('returns undefined when the cluster has not stored an API server', () => {
     expect(lookupKnownApiUrl([{ devSpacesUrl: SHARED, apiUrl: '' }], SHARED)).toBeUndefined();
     expect(lookupKnownApiUrl(undefined, SHARED)).toBeUndefined();
+  });
+});
+
+describe('storedUrlNamesCluster', () => {
+  const active = {
+    id: 'active',
+    apiUrl: API,
+    devSpacesUrl: 'https://devspaces.apps.cluster.example.com',
+    appsDomain: 'apps.cluster.example.com',
+  };
+  const other = {
+    id: 'other',
+    apiUrl: 'https://api.other.example.com:6443',
+    devSpacesUrl: 'https://devspaces.apps.other.example.com',
+    appsDomain: 'apps.other.example.com',
+  };
+
+  it('names the cluster signed in with the API server', () => {
+    expect(storedUrlNamesCluster(API, active)).toBe(true);
+  });
+
+  it('names the cluster by its shared dashboard', () => {
+    expect(storedUrlNamesCluster(SHARED, { ...active, devSpacesUrl: SHARED })).toBe(true);
+  });
+
+  it('does not name a different cluster', () => {
+    expect(storedUrlNamesCluster(API, other)).toBe(false);
+    expect(storedUrlNamesCluster(undefined, active)).toBe(false);
   });
 });
 
