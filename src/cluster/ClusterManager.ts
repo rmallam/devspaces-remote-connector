@@ -3,6 +3,7 @@ import { Logger } from '../util/Logger';
 import { ClusterDiscovery } from '../auth/ClusterDiscovery';
 import { STATE_CLUSTER_URL, STATE_CLUSTER_DISPLAY_URL } from '../constants';
 import { CLUSTERS_STATE_KEY } from '../kubernetes/knownApiUrl';
+import { clusterIdFromUrl } from './clusterId';
 
 /**
  * A registered DevSpaces cluster with all resolved endpoints.
@@ -201,12 +202,10 @@ export class ClusterManager {
       if (!hostname.includes('.openshiftapps.com') && !hostname.includes('.p1.')) {
         return hostname;
       }
-      // Long ROSA URLs — extract cluster name
       // e.g. devspaces.apps.devspc02-1d.zs5b.p1.openshiftapps.com → devspaces@devspc02-1d
-      const appsIdx = hostname.indexOf('.apps.');
-      if (appsIdx !== -1) {
-        const appsDomain = hostname.slice(appsIdx + 1); // apps.devspc02-1d.zs5b...
-        const clusterName = appsDomain.replace(/^apps\./, '').split('.')[0];
+      // ROSA keeps the cluster name, not the shared "rosa" label.
+      const clusterName = clusterIdFromUrl(url);
+      if (!clusterName.includes('.')) {
         return `devspaces@${clusterName}`;
       }
       return hostname;
@@ -233,32 +232,10 @@ export class ClusterManager {
 
   /**
    * Generate a stable ID from a URL.
-   * Extracts the cluster short prefix from OpenShift apps domains.
-   * e.g. apps.devspc-1d.ctyz.p1.openshiftapps.com → devspc-1d
-   * For CNAMEs like devspaces.example.com → devspaces.example.com (keep as-is)
+   * Dedicated OpenShift apps domains use the cluster name.
+   * ROSA and shared-ingress hosts must not share one id across clusters.
    */
   urlToId(url: string): string {
-    try {
-      const hostname = new URL(url).hostname;
-      // Match apps.<cluster-prefix>.<random>.<suffix> pattern (at least 2 segments after prefix)
-      const appsIdx = hostname.indexOf('.apps.');
-      if (appsIdx !== -1) {
-        const afterApps = hostname.slice(appsIdx + '.apps.'.length); // devspc-1d.ctyz.p1.openshiftapps.com
-        const parts = afterApps.split('.');
-        if (parts.length >= 3) {
-          return parts[0]; // cluster short prefix
-        }
-      }
-      if (hostname.startsWith('api.')) {
-        const afterApi = hostname.slice('api.'.length);
-        const parts = afterApi.split('.');
-        if (parts.length >= 3) {
-          return parts[0];
-        }
-      }
-      return hostname;
-    } catch {
-      return url;
-    }
+    return clusterIdFromUrl(url);
   }
 }

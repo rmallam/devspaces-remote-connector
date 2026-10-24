@@ -32,6 +32,9 @@ jest.mock('vscode', () => ({
     registerCommand: jest.fn(),
     executeCommand: jest.fn(),
   },
+  ConfigurationTarget: {
+    Global: 1,
+  },
 }), { virtual: true });
 
 // Mock @kubernetes/client-node module for tests

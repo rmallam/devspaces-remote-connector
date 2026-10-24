@@ -5,6 +5,7 @@ import { ClusterDiscovery } from '../auth/ClusterDiscovery';
 import { KubeClientFactory } from './KubeClientFactory';
 import { SIDECAR_PREFIXES, DW_API_GROUP, DW_API_VERSION, DW_PLURAL, LABEL_DEVWORKSPACE_ID } from '../constants';
 import { DevWorkspaceResource } from './DevWorkspaceTypes';
+import { clusterIdFromUrl } from '../cluster/clusterId';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -42,12 +43,9 @@ export class KubeAuthHelper {
     const appsDomain = this.clusterDiscovery.extractAppsDomain(clusterUrl);
     if (appsDomain) {
       keysToTry.push(appsDomain);
-      // Also try the cluster short prefix (e.g. devspc-1d from apps.devspc-1d.ctyz.p1...)
-      const parts = appsDomain.replace(/^apps\./, '').split('.');
-      if (parts.length >= 3) {
-        keysToTry.push(parts[0]);
-      }
+      keysToTry.push(clusterIdFromUrl(`https://${appsDomain}`));
     }
+    keysToTry.push(clusterIdFromUrl(clusterUrl));
 
     for (const key of keysToTry) {
       const storedToken = await this.tokenManager.getToken(key);

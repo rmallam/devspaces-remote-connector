@@ -4,6 +4,7 @@ import { TokenManager, StoredToken } from './TokenManager';
 import { OAuthFlow } from './OAuthFlow';
 import { ClusterDiscovery, ClusterEndpoints } from './ClusterDiscovery';
 import { CLUSTERS_STATE_KEY, KnownCluster, lookupKnownApiUrl } from '../kubernetes/knownApiUrl';
+import { clusterIdFromUrl } from '../cluster/clusterId';
 import { getJson } from '../util/httpClient';
 import {
   CTX_AUTHENTICATED,
@@ -155,11 +156,12 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     // Also store under the cluster ID (appsDomain) so initCluster can find it
     if (this.endpoints.appsDomain) {
       await this.tokenManager.storeToken(this.endpoints.appsDomain, token);
-      // Also store under the cluster short prefix (e.g. devspc-1d)
-      const parts = this.endpoints.appsDomain.replace(/^apps\./, '').split('.');
-      if (parts.length >= 3) {
-        await this.tokenManager.storeToken(parts[0], token);
-      }
+    }
+    // Key the copy by this cluster's id. The first label after "apps." is
+    // "rosa" for every ROSA cluster, so it must not be the token key.
+    const clusterId = clusterIdFromUrl(this.endpoints.apiUrl || clusterUrl);
+    if (clusterId && clusterId !== clusterUrl && clusterId !== this.endpoints.appsDomain) {
+      await this.tokenManager.storeToken(clusterId, token);
     }
     this.storeClusterUrl(clusterUrl);
 
