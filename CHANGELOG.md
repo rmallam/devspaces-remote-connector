@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.2
+
+- Use the Dev Spaces route host (`status.cheURL`) after API-server login instead of guessing `devspaces.` from the API name.
+- Keep the API server from sign-in when reconnecting through a shared ingress.
+- Update the active cluster URL only for the cluster that owns it.
+- Give each ROSA and shared-ingress host its own cluster id so primary and DR do not collapse into one entry.
+- Keep the API-server token when Connect uses a CheCluster host on a different domain.
+- Stop hanging sign-in when the Dev Spaces URL is a shared ingress host.
+
+
 ## 0.7.0
 
 ### Architecture
