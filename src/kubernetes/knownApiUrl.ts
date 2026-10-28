@@ -49,6 +49,42 @@ export function lookupKnownApiUrl(
 }
 
 /**
+ * Exact keys TokenManager may have used for this cluster.
+ *
+ * Sign-in stores the OpenShift token under the API URL the user typed. After
+ * login the active URL is rewritten to CheCluster `status.cheURL`, which is a
+ * different host on a shared ingress. Connect then looks up the token by that
+ * dashboard URL and must still find the API-server copy.
+ */
+export function tokenStorageKeys(
+  clusterUrl: string,
+  clusters: KnownCluster[] | undefined,
+  extraKeys: string[] = [],
+): string[] {
+  const keys: string[] = [];
+  const add = (value?: string) => {
+    const trimmed = value?.trim();
+    if (trimmed && !keys.includes(trimmed)) {
+      keys.push(trimmed);
+    }
+  };
+  add(clusterUrl);
+  for (const extra of extraKeys) {
+    add(extra);
+  }
+  const cluster = clusters?.find((entry) => storedUrlNamesCluster(clusterUrl, entry, extraKeys));
+  if (cluster) {
+    add(cluster.apiUrl);
+    add(cluster.devSpacesUrl);
+    add(cluster.id);
+    add(cluster.appsDomain);
+  } else {
+    add(lookupKnownApiUrl(clusters, clusterUrl, extraKeys));
+  }
+  return keys;
+}
+
+/**
  * Whether a global cluster URL belongs to this cluster.
  *
  * Several clusters can initialize at once. Only the cluster that owns the

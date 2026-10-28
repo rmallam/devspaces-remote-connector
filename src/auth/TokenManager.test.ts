@@ -161,3 +161,53 @@ describe('TokenManager', () => {
     });
   });
 });
+
+class MemoryState {
+  private data = new Map<string, unknown>();
+
+  get<T>(key: string): T | undefined {
+    return this.data.get(key) as T | undefined;
+  }
+
+  async update(key: string, value: unknown): Promise<void> {
+    if (value === undefined) {
+      this.data.delete(key);
+    } else {
+      this.data.set(key, value);
+    }
+  }
+}
+
+describe('TokenManager shared-ingress aliases', () => {
+  const apiUrl = 'https://api.cluster.example.com:6443';
+  const dashboardUrl = 'https://devspaces.apps.shared.example.com';
+
+  it('finds a token stored under the API server when looking up the CheCluster host', async () => {
+    const manager = new TokenManager(new MemoryState() as any);
+    await manager.storeToken(apiUrl, {
+      accessToken: 'sha256~from-api',
+      clusterUrl: apiUrl,
+      expiresAt: Date.now() + 3600000,
+    });
+
+    const found = await manager.getValidToken([dashboardUrl, apiUrl]);
+    expect(found?.accessToken).toBe('sha256~from-api');
+    manager.dispose();
+  });
+
+  it('copies the API-server token onto the shared-ingress dashboard host', async () => {
+    const manager = new TokenManager(new MemoryState() as any);
+    await manager.storeToken(apiUrl, {
+      accessToken: 'sha256~from-api',
+      clusterUrl: apiUrl,
+      expiresAt: Date.now() + 3600000,
+    });
+
+    await manager.copyToken([apiUrl], dashboardUrl);
+
+    const copied = await manager.getToken(dashboardUrl);
+    expect(copied?.accessToken).toBe('sha256~from-api');
+    expect(copied?.clusterUrl).toBe(dashboardUrl);
+    manager.dispose();
+  });
+});

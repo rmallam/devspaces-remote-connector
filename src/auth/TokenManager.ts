@@ -50,6 +50,38 @@ export class TokenManager {
     this.scheduleRefresh(token);
   }
 
+  async getValidToken(keys: string[]): Promise<StoredToken | undefined> {
+    for (const key of keys) {
+      if (!key) {
+        continue;
+      }
+      const stored = await this.getToken(key);
+      if (stored && this.isTokenValid(stored)) {
+        return stored;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Copy a valid token onto another lookup key (the CheCluster dashboard host).
+   */
+  async copyToken(fromKeys: string[], toKey: string): Promise<void> {
+    const target = toKey.trim();
+    if (!target) {
+      return;
+    }
+    const existing = await this.getToken(target);
+    if (existing && this.isTokenValid(existing)) {
+      return;
+    }
+    const token = await this.getValidToken(fromKeys);
+    if (!token) {
+      return;
+    }
+    await this.storeToken(target, { ...token, clusterUrl: target });
+  }
+
   async getToken(clusterUrl: string): Promise<StoredToken | undefined> {
     const key = this.keyFor(clusterUrl);
     const raw = this.globalState.get<string>(key);

@@ -1,15 +1,15 @@
-import { lookupKnownApiUrl, storedUrlNamesCluster } from './knownApiUrl';
+import { lookupKnownApiUrl, storedUrlNamesCluster, tokenStorageKeys } from './knownApiUrl';
 
 const API = 'https://api.cluster.example.com:6443';
 const SHARED = 'https://devspaces.apps.shared.example.com';
+const clusters = [{
+  id: 'cluster',
+  apiUrl: API,
+  devSpacesUrl: SHARED,
+  appsDomain: 'apps.cluster.example.com',
+}];
 
 describe('lookupKnownApiUrl', () => {
-  const clusters = [{
-    id: 'cluster',
-    apiUrl: API,
-    devSpacesUrl: SHARED,
-    appsDomain: 'apps.cluster.example.com',
-  }];
 
   it('keeps the API server when the connection URL is the shared dashboard', () => {
     expect(lookupKnownApiUrl(clusters, SHARED)).toBe(API);
@@ -22,6 +22,22 @@ describe('lookupKnownApiUrl', () => {
   it('returns undefined when the cluster has not stored an API server', () => {
     expect(lookupKnownApiUrl([{ devSpacesUrl: SHARED, apiUrl: '' }], SHARED)).toBeUndefined();
     expect(lookupKnownApiUrl(undefined, SHARED)).toBeUndefined();
+  });
+});
+
+describe('tokenStorageKeys', () => {
+  it('includes the API server when the active URL is a shared-ingress dashboard', () => {
+    expect(tokenStorageKeys(SHARED, clusters)).toEqual([
+      SHARED,
+      API,
+      'cluster',
+      'apps.cluster.example.com',
+    ]);
+  });
+
+  it('still includes the API server when only the API URL was used at sign-in', () => {
+    expect(tokenStorageKeys(API, clusters)).toContain(API);
+    expect(tokenStorageKeys(API, clusters)).toContain(SHARED);
   });
 });
 
