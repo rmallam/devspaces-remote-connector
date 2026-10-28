@@ -25,6 +25,9 @@ export interface ClusterEndpoints {
  * - https://devspaces.example.com (CNAME alias)
  * - https://api.devspc02-1d.zs5b.p1.openshiftapps.com:6443
  */
+/** Probes against a guessed console/API host must not spin the sign-in UI. */
+const DISCOVERY_TIMEOUT_MS = 5_000;
+
 export class ClusterDiscovery {
   private logger = Logger.getInstance();
 
@@ -137,27 +140,24 @@ export class ClusterDiscovery {
 
   /**
    * Discover cluster endpoints from any URL the user provides.
+   *
+   * An API server URL is used as-is. A Dev Spaces / shared-ingress URL is not
+   * a Kubernetes server: guessing `api.` or `console-openshift-console.` from
+   * that host hangs. Follow `/oauth/start` to the real `oauth-openshift` apps
+   * domain, or ask for the API URL.
    */
   async discover(inputUrl: string): Promise<ClusterEndpoints> {
     this.logger.info(`Discovering cluster endpoints from: ${inputUrl}`);
 
     const baseUrl = this.normalizeInputUrl(inputUrl);
-    let appsDomain = this.extractAppsDomain(baseUrl);
-
-    // If we couldn't extract from the hostname, try following /oauth/start
-    if (!appsDomain) {
-      this.logger.debug(`Could not extract apps domain from hostname, trying /oauth/start redirect from ${baseUrl}`);
-      appsDomain = await this.discoverAppsDomainViaRedirect(baseUrl);
-    }
-
-    // An API URL the user typed is already the Kubernetes server. Do not replace
-    // it with a host guessed from the apps domain.
     const pastedApi = this.resolveApiUrl(baseUrl, '');
+    const appsDomain = pastedApi
+      ? (this.extractAppsDomain(baseUrl) ?? '')
+      : await this.resolveAppsDomainFromDashboard(baseUrl);
+
     let apiUrl: string;
     if (pastedApi) {
       apiUrl = pastedApi;
-    } else if (!appsDomain) {
-      throw new Error(`Could not determine the apps domain for ${baseUrl}`);
     } else {
       apiUrl = await this.buildKubeAPIServerURL(appsDomain);
     }
@@ -167,7 +167,6 @@ export class ClusterDiscovery {
     this.logger.debug(`API URL: ${apiUrl}`);
     this.logger.debug(`DevSpaces URL: ${devSpacesUrl}`);
 
-    // Fetch OAuth metadata from the API server
     const oauthMeta = await this.fetchOAuthMetadata(baseUrl, apiUrl);
 
     const endpoints: ClusterEndpoints = {
@@ -187,7 +186,7 @@ export class ClusterDiscovery {
     const clusterBase = appsDomain.replace(/^apps\./, '')
     const defaultApiUrl = `https://api.${clusterBase}:6443`
     try {
-      const response = await request({ url: consoleURL, method: 'GET' })
+      const response = await request({ url: consoleURL, method: 'GET', timeout: DISCOVERY_TIMEOUT_MS })
       const html = response.data
 
       // Find the line with window.SERVER_FLAGS = {...};
@@ -212,43 +211,74 @@ export class ClusterDiscovery {
   }
 
   /**
-   * Discover the apps domain by following the DevSpaces /oauth/start redirect.
-   * Used as a fallback when the URL is a CNAME (e.g. devspaces.example.com).
+   * Find the real OpenShift apps domain from a dashboard / shared-ingress URL.
+   *
+   * The dashboard hostname is not the cluster apps domain on a shared ingress.
+   * Guessing `console-openshift-console.` or `api.` from it hangs. Prefer the
+   * `/oauth/start` hop to `oauth-openshift.apps.<cluster>`.
    */
-  private async discoverAppsDomainViaRedirect(baseUrl: string): Promise<string> {
+  private async resolveAppsDomainFromDashboard(baseUrl: string): Promise<string> {
+    const fromRedirect = await this.tryAppsDomainFromOAuthStart(baseUrl);
+    if (fromRedirect) {
+      this.logger.debug(`Apps domain from /oauth/start: ${fromRedirect}`);
+      return fromRedirect;
+    }
+    const extracted = this.extractAppsDomain(baseUrl);
+    if (extracted && this.isManagedOpenShiftAppsDomain(extracted)) {
+      return extracted;
+    }
+    throw new Error(
+      `Could not find the OpenShift API from ${baseUrl}. ` +
+      `A Dev Spaces URL on a shared ingress is not the API server. ` +
+      `Paste the API server URL instead (https://api.<cluster>:6443).`
+    );
+  }
+
+  private isManagedOpenShiftAppsDomain(appsDomain: string): boolean {
+    return /\.openshiftapps\.com$/.test(appsDomain);
+  }
+
+  private async tryAppsDomainFromOAuthStart(baseUrl: string): Promise<string | undefined> {
     const url = `${baseUrl}/oauth/start`;
     this.logger.debug(`Following redirect from ${url}`);
-
     try {
-      await request({ url, method: 'GET', headers: { Accept: 'text/html' } });
-      // If we got a 2xx, there's no redirect — can't discover the domain
-      throw new Error(
-        `Could not discover cluster from ${baseUrl}. ` +
-        `Expected redirect from /oauth/start. ` +
-        `Try pasting a URL that contains the cluster domain (e.g. devspaces.example.com).`
-      );
+      await request({
+        url,
+        method: 'GET',
+        headers: { Accept: 'text/html' },
+        timeout: DISCOVERY_TIMEOUT_MS,
+      });
+      return undefined;
     } catch (err) {
       if (err instanceof HttpError && err.statusCode >= 300 && err.statusCode < 400) {
         const location = err.responseHeaders.location;
         if (location) {
           const locationStr = Array.isArray(location) ? location[0] : location;
-          try {
-            const host = new URL(locationStr).hostname;
-            // oauth-openshift.apps.<cluster-domain> → apps.<cluster-domain>
-            const appsDomain = host.replace(/^oauth-openshift\./, '');
-            if (appsDomain.startsWith('apps.') || appsDomain.startsWith('apps-')) {
-              return appsDomain;
-            }
-          } catch { /* fall through */ }
+          const appsDomain = this.appsDomainFromOAuthLocation(locationStr);
+          if (appsDomain) {
+            return appsDomain;
+          }
         }
-        throw new Error(
-          `Could not discover cluster from ${baseUrl}. ` +
-          `No valid redirect from /oauth/start (status: ${err.statusCode}). ` +
-          `Try pasting a URL that contains the cluster domain (e.g. devspaces.example.com).`
-        );
       }
-      throw err;
+      this.logger.debug(`/oauth/start from ${baseUrl} did not reveal the apps domain: ${err}`);
+      return undefined;
     }
+  }
+
+  private appsDomainFromOAuthLocation(location: string): string | undefined {
+    try {
+      const host = new URL(location).hostname.toLowerCase();
+      if (!host.startsWith('oauth-openshift.')) {
+        return undefined;
+      }
+      const appsDomain = host.slice('oauth-openshift.'.length);
+      if (appsDomain.startsWith('apps.') || appsDomain.startsWith('apps-')) {
+        return appsDomain;
+      }
+    } catch {
+      // Ignore a non-URL Location.
+    }
+    return undefined;
   }
 
   /**
@@ -262,7 +292,7 @@ export class ClusterDiscovery {
     try {
       const url = `${apiUrl}/.well-known/oauth-authorization-server`;
       this.logger.debug(`Fetching OAuth metadata from ${url}`);
-      const res = await request({ url, method: 'GET' });
+      const res = await request({ url, method: 'GET', timeout: DISCOVERY_TIMEOUT_MS });
       const meta = JSON.parse(res.data);
       if (meta.authorization_endpoint && meta.token_endpoint) {
         return meta;
@@ -275,7 +305,7 @@ export class ClusterDiscovery {
     try {
       const url = `${baseUrl}/oauth/start`;
       this.logger.debug(`Following redirect from ${url} to discover OAuth endpoints`);
-      await request({ url, method: 'GET', headers: { Accept: 'text/html' } });
+      await request({ url, method: 'GET', headers: { Accept: 'text/html' }, timeout: DISCOVERY_TIMEOUT_MS });
       // If we got a 2xx, there's no redirect
       throw new Error(`Could not discover OAuth endpoints from ${baseUrl}: no redirect from /oauth/start`);
     } catch (err) {
