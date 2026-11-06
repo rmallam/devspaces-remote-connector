@@ -185,20 +185,20 @@ describe('TokenManager shared-ingress aliases', () => {
   it('finds a token stored under the API server when looking up the CheCluster host', async () => {
     const manager = new TokenManager(new MemoryState() as any);
     await manager.storeToken(apiUrl, {
-      accessToken: 'sha256~from-api',
+      accessToken: 'sha256~from-api', // notsecret — test fixture only
       clusterUrl: apiUrl,
       expiresAt: Date.now() + 3600000,
     });
 
     const found = await manager.getValidToken([dashboardUrl, apiUrl]);
-    expect(found?.accessToken).toBe('sha256~from-api');
+    expect(found?.accessToken).toBe('sha256~from-api'); // notsecret
     manager.dispose();
   });
 
   it('copies the API-server token onto the shared-ingress dashboard host', async () => {
     const manager = new TokenManager(new MemoryState() as any);
     await manager.storeToken(apiUrl, {
-      accessToken: 'sha256~from-api',
+      accessToken: 'sha256~from-api', // notsecret — test fixture only
       clusterUrl: apiUrl,
       expiresAt: Date.now() + 3600000,
     });
@@ -206,7 +206,7 @@ describe('TokenManager shared-ingress aliases', () => {
     await manager.copyToken([apiUrl], dashboardUrl);
 
     const copied = await manager.getToken(dashboardUrl);
-    expect(copied?.accessToken).toBe('sha256~from-api');
+    expect(copied?.accessToken).toBe('sha256~from-api'); // notsecret
     expect(copied?.clusterUrl).toBe(dashboardUrl);
     manager.dispose();
   });

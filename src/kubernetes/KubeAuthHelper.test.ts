@@ -24,7 +24,7 @@ describe('KubeAuthHelper shared-ingress token lookup', () => {
   it('builds kubeconfig from the API-server token when the connection URL is the CheCluster host', async () => {
     const tokenManager = new TokenManager(new MemoryState() as any);
     await tokenManager.storeToken(apiUrl, {
-      accessToken: 'sha256~from-api',
+      accessToken: 'sha256~from-api', // notsecret — test fixture only
       clusterUrl: apiUrl,
       expiresAt: Date.now() + 3600000,
     });
@@ -40,7 +40,7 @@ describe('KubeAuthHelper shared-ingress token lookup', () => {
 
     expect(kc).toEqual({ kind: 'kc' });
     expect(discovery.discover).not.toHaveBeenCalled();
-    expect(kubeFactory.createConfig).toHaveBeenCalledWith(apiUrl, 'sha256~from-api');
+    expect(kubeFactory.createConfig).toHaveBeenCalledWith(apiUrl, 'sha256~from-api'); // notsecret
     tokenManager.dispose();
   });
 });
