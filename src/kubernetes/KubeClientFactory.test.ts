@@ -1,5 +1,6 @@
 import * as k8s from '@kubernetes/client-node';
 import { KubeClientFactory } from './KubeClientFactory';
+import { setCertificateValidationEnabled } from '../util/tls';
 
 // Override the global k8s mock with a functional KubeConfig
 jest.mock('@kubernetes/client-node', () => {
@@ -51,6 +52,16 @@ describe('KubeClientFactory', () => {
     it('sets current context', () => {
       const kc = factory.createConfig('https://api.cluster.example.com:6443', 'sha256~token');
       expect(kc.getCurrentContext()).toBe('devspaces-context');
+    });
+
+    it('scopes skipTLSVerify to the KubeConfig cluster entry when certificateValidation is disabled', () => {
+      expect(factory.createConfig('https://api.cluster.example.com:6443', 'sha256~token').getCurrentCluster()?.skipTLSVerify).toBe(false);
+      setCertificateValidationEnabled(false);
+      try {
+        expect(factory.createConfig('https://api.cluster.example.com:6443', 'sha256~token').getCurrentCluster()?.skipTLSVerify).toBe(true);
+      } finally {
+        setCertificateValidationEnabled(true);
+      }
     });
   });
 });

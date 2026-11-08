@@ -1,5 +1,5 @@
 import * as https from 'https';
-import { getHttpsAgent } from './tls';
+import { getHttpsAgent, isCertificateValidationEnabled } from './tls';
 import { Logger } from './Logger';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -41,15 +41,17 @@ const MAX_REDIRECTS = 5;
 // ─── Shared Agent ────────────────────────────────────────────────────────────
 
 let sharedAgent: https.Agent | undefined;
+let sharedAgentCertValidation: boolean | undefined;
 
 /**
  * Get or create the shared HTTPS agent with system CAs loaded.
- * The agent is created once and reused for all requests, providing
- * connection pooling and consistent TLS trust configuration.
+ * Recreates the agent if the certificateValidation setting changed.
  */
 function getAgent(): https.Agent {
-  if (!sharedAgent) {
+  const certValidation = isCertificateValidationEnabled();
+  if (!sharedAgent || sharedAgentCertValidation !== certValidation) {
     sharedAgent = getHttpsAgent();
+    sharedAgentCertValidation = certValidation;
   }
   return sharedAgent;
 }

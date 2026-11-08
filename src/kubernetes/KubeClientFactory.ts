@@ -1,5 +1,6 @@
 import * as k8s from '@kubernetes/client-node';
 import { Logger } from '../util/Logger';
+import { isCertificateValidationEnabled } from '../util/tls';
 
 /**
  * Stateless factory for creating authenticated Kubernetes API clients.
@@ -13,12 +14,14 @@ export class KubeClientFactory {
    */
   createConfig(apiUrl: string, token: string): k8s.KubeConfig {
     const kc = new k8s.KubeConfig();
+    const skipTLSVerify = !isCertificateValidationEnabled();
 
     kc.loadFromOptions({
       clusters: [
         {
           name: 'devspaces-cluster',
           server: apiUrl,
+          skipTLSVerify,
         },
       ],
       users: [

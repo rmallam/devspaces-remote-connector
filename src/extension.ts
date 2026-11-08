@@ -20,7 +20,7 @@ import { registerRemoteCommands, ActiveConnectionInfo, track } from './commands/
 import { registerWorkspaceCommands } from './commands/workspaceCommands';
 import { registerAuthCommands } from './commands/authCommands';
 import { registerClusterCommands } from './commands/clusterCommands';
-import { loadSystemCAs } from './util/tls';
+import { loadSystemCAs, setCertificateValidationEnabled } from './util/tls';
 import {
   AUTH_PROVIDER_ID,
   AUTH_PROVIDER_LABEL,
@@ -51,9 +51,9 @@ export async function activate(
   logger.info(`[IDE Detection] isVSCode=${ide.isVSCode}, isOSS=${ide.isOSS}, isVSCodium=${ide.isVSCodium}, isUnknownFork=${ide.isUnknownFork}, isKiro=${ide.isKiro}`);
   logger.info(`[IDE Detection] App Name: ${vscode.env.appName}, URI Scheme: ${vscode.env.uriScheme}`);
 
-  if (!vscode.workspace.getConfiguration('devspaces').get('certificateValidation.enabled', true)) {
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-  }
+  setCertificateValidationEnabled(
+    vscode.workspace.getConfiguration('devspaces').get('certificateValidation.enabled', true)
+  );
 
   loadSystemCAs();
 
@@ -316,7 +316,7 @@ async function setupLocalSession(context: vscode.ExtensionContext): Promise<void
     const newConfig = vscode.workspace.getConfiguration('devspaces');
 
     if (hasConfigKeyChanged('certificateValidation.enabled', oldConfig, newConfig)) {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = newConfig.get('certificateValidation.enabled', true) ? '1' : '0';
+      setCertificateValidationEnabled(newConfig.get('certificateValidation.enabled', true));
     }
 
     oldConfig = newConfig;

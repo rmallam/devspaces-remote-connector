@@ -11,6 +11,17 @@ import { Logger } from './Logger';
 /** Cached extra CA certificates (PEM format) */
 let extraCAs: string | undefined;
 
+/** Extension-scoped TLS certificate verification toggle (avoids process-wide NODE_TLS_REJECT_UNAUTHORIZED). */
+let certificateValidationEnabled = true;
+
+export function setCertificateValidationEnabled(enabled: boolean): void {
+  certificateValidationEnabled = enabled;
+}
+
+export function isCertificateValidationEnabled(): boolean {
+  return certificateValidationEnabled;
+}
+
 /**
  * Load CA certificates for TLS trust.
  *
@@ -114,8 +125,8 @@ export function loadSystemCAs(): void {
 export function getHttpsAgent(): https.Agent {
   const ca = buildCAList();
   const logger = Logger.getInstance();
-  logger.debug(`[TLS] HTTPS agent created with ${ca.length} total CA certs (${tls.rootCertificates.length} Node built-in + ${ca.length - tls.rootCertificates.length} extra).`);
-  return new https.Agent({ ca });
+  logger.debug(`[TLS] HTTPS agent created with ${ca.length} total CA certs (${tls.rootCertificates.length} Node built-in + ${ca.length - tls.rootCertificates.length} extra), rejectUnauthorized=${certificateValidationEnabled}.`);
+  return new https.Agent({ ca, rejectUnauthorized: certificateValidationEnabled });
 }
 
 /**
