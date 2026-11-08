@@ -210,4 +210,41 @@ describe('TokenManager shared-ingress aliases', () => {
     expect(copied?.clusterUrl).toBe(dashboardUrl);
     manager.dispose();
   });
+
+  it('maintains independent refresh timers across multiple clusters', async () => {
+    jest.useFakeTimers();
+    try {
+      const manager = new TokenManager(new MemoryState() as any);
+      const refreshed: string[] = [];
+      manager.onTokenExpiring(async (url) => {
+        refreshed.push(url);
+      });
+
+      const clusterA = 'https://devspaces.apps.cluster-a.example.com';
+      const clusterB = 'https://devspaces.apps.cluster-b.example.com';
+
+      await manager.storeToken(clusterA, {
+        accessToken: 'sha256~token-a', // notsecret
+        clusterUrl: clusterA,
+        expiresAt: Date.now() + 6 * 60 * 1000,
+      });
+      await manager.storeToken(clusterB, {
+        accessToken: 'sha256~token-b', // notsecret
+        clusterUrl: clusterB,
+        expiresAt: Date.now() + 7 * 60 * 1000,
+      });
+
+      jest.advanceTimersByTime(65 * 1000);
+      await Promise.resolve();
+      expect(refreshed).toEqual([clusterA]);
+
+      jest.advanceTimersByTime(60 * 1000);
+      await Promise.resolve();
+      expect(refreshed).toEqual([clusterA, clusterB]);
+
+      manager.dispose();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 });

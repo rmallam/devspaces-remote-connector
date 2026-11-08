@@ -342,7 +342,11 @@ async function setupLocalSession(context: vscode.ExtensionContext): Promise<void
   try {
     await authProvider.initializeFromStored();
     const sessions = await authProvider.getSessions();
-    if (sessions.length > 0) {
+    const hasClusters = clusterManager.getClusters().length > 0;
+    if (sessions.length > 0 || hasClusters) {
+      if (hasClusters) {
+        await vscode.commands.executeCommand('setContext', 'devspaces.isAuthenticated', true);
+      }
       await sessionManager.loadAllClusters();
       const activeConn = context.globalState.get<ActiveConnectionInfo>(STATE_ACTIVE_CONNECTION);
       if (activeConn) {

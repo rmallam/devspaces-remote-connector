@@ -36,8 +36,8 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     this.disposables.push(this.sessionChangeEmitter);
 
     // Register background token refresh callback
-    this.tokenManager.onTokenExpiring(async () => {
-      await this.silentReauthenticate();
+    this.tokenManager.onTokenExpiring(async (targetClusterUrl) => {
+      await this.silentReauthenticate(targetClusterUrl);
     });
   }
 
@@ -49,8 +49,8 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
    * memory across VS Code restarts, which used to fail with "cannot refresh"
    * and pushed people to Clear Auth.
    */
-  private async silentReauthenticate(): Promise<void> {
-    const clusterUrl = this.getStoredClusterUrl();
+  private async silentReauthenticate(targetClusterUrl?: string): Promise<void> {
+    const clusterUrl = targetClusterUrl ?? this.getStoredClusterUrl();
     if (!clusterUrl) {
       throw new Error('No cluster URL stored');
     }
