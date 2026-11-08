@@ -13,6 +13,9 @@ export class WorkspaceManager {
   private logger = Logger.getInstance();
   private workspaces: WorkspaceModel[] = [];
   private userNamespace: string | undefined;
+  private watchController: { abort: () => void } | undefined;
+  private watchReconnectTimer: NodeJS.Timeout | undefined;
+  private disposed = false;
 
   private readonly onDidChangeWorkspacesEmitter = new vscode.EventEmitter<void>();
   readonly onDidChangeWorkspaces = this.onDidChangeWorkspacesEmitter.event;
@@ -29,6 +32,60 @@ export class WorkspaceManager {
       return;
     }
     await this.refresh();
+    void this.startWatch();
+  }
+
+  private async startWatch(): Promise<void> {
+    if (this.disposed || !this.userNamespace || typeof this.devWorkspaceApi.watch !== 'function') {
+      return;
+    }
+    this.stopWatch();
+    this.watchController = await this.devWorkspaceApi.watch(
+      this.userNamespace,
+      (type, ws) => {
+        if (this.disposed) {
+          return;
+        }
+        if (type === 'DELETED') {
+          this.workspaces = this.workspaces.filter((item) => item.name !== ws.name);
+        } else {
+          const idx = this.workspaces.findIndex((item) => item.name === ws.name);
+          if (idx >= 0) {
+            this.workspaces[idx] = ws;
+          } else {
+            this.workspaces.push(ws);
+          }
+        }
+        this.onDidChangeWorkspacesEmitter.fire();
+      },
+      () => {
+        if (this.disposed) {
+          return;
+        }
+        this.watchController = undefined;
+        if (!this.watchReconnectTimer) {
+          this.watchReconnectTimer = setTimeout(() => {
+            this.watchReconnectTimer = undefined;
+            void this.startWatch();
+          }, 5000);
+        }
+      },
+    );
+  }
+
+  private stopWatch(): void {
+    if (this.watchReconnectTimer) {
+      clearTimeout(this.watchReconnectTimer);
+      this.watchReconnectTimer = undefined;
+    }
+    if (this.watchController) {
+      try {
+        this.watchController.abort();
+      } catch {
+        // ignore abort errors
+      }
+      this.watchController = undefined;
+    }
   }
 
   async refresh(): Promise<void> {
@@ -124,6 +181,8 @@ export class WorkspaceManager {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.stopWatch();
     this.onDidChangeWorkspacesEmitter.dispose();
   }
 }

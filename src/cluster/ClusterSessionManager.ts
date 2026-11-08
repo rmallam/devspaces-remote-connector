@@ -153,7 +153,7 @@ export class ClusterSessionManager {
   private createWorkspaceManager(kubeConfig: k8s.KubeConfig, clusterId: string, devSpacesUrl: string, accessToken: string): WorkspaceManager {
     const coreApi = kubeConfig.makeApiClient(k8s.CoreV1Api);
     const customApi = kubeConfig.makeApiClient(k8s.CustomObjectsApi);
-    const devWorkspaceApi = new DevWorkspaceApi(customApi, clusterId);
+    const devWorkspaceApi = new DevWorkspaceApi(customApi, clusterId, kubeConfig);
     const namespaceApi = new NamespaceApi(coreApi, customApi, devSpacesUrl, accessToken);
     const wm = new WorkspaceManager(devWorkspaceApi, namespaceApi);
     this.context.subscriptions.push(wm);
