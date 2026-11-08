@@ -24,20 +24,20 @@ class MemoryState {
 }
 
 describe('OpenShiftAuthProvider.getAccessToken', () => {
-  const apiUrl = 'https://api.rosa-rwx5g.example.p3.openshiftapps.com:6443';
+  const apiUrl = 'https://api.cluster-a.example.p3.openshiftapps.com:6443';
   const dashboardUrl = 'https://devspaces.apps.shared.example.com';
   const endpoints = {
     apiUrl,
     oauthAuthorizeUrl: `${apiUrl}/oauth/authorize`,
     oauthTokenUrl: `${apiUrl}/oauth/token`,
     devSpacesUrl: dashboardUrl,
-    appsDomain: 'apps.rosa.rosa-rwx5g.example.p3.openshiftapps.com',
+    appsDomain: 'apps.cluster-a.example.p3.openshiftapps.com',
   };
 
   async function seedCluster(globalState: MemoryState): Promise<void> {
     await globalState.update(STATE_CLUSTER_URL, dashboardUrl);
     await globalState.update(CLUSTERS_STATE_KEY, [{
-      id: 'rosa-rwx5g',
+      id: 'cluster-a',
       apiUrl,
       devSpacesUrl: dashboardUrl,
       appsDomain: endpoints.appsDomain,
@@ -122,6 +122,58 @@ describe('OpenShiftAuthProvider.getAccessToken', () => {
 
     expect(clusterDiscovery.discover).toHaveBeenCalledWith(apiUrl);
     expect(provider.getEndpoints()).toEqual(endpoints);
+    tokenManager.dispose();
+  });
+
+  it('re-discovers endpoints when signing into a second cluster instead of reusing the first cluster endpoints', async () => {
+    const globalState = new MemoryState();
+    await seedCluster(globalState);
+
+    const secondApiUrl = 'https://api.cluster-b.example.p3.openshiftapps.com:6443';
+    const secondDashboardUrl = 'https://devspaces.apps.shared-b.example.com';
+    const secondEndpoints = {
+      apiUrl: secondApiUrl,
+      oauthAuthorizeUrl: `${secondApiUrl}/oauth/authorize`,
+      oauthTokenUrl: `${secondApiUrl}/oauth/token`,
+      devSpacesUrl: secondDashboardUrl,
+      appsDomain: 'apps.cluster-b.example.p3.openshiftapps.com',
+    };
+
+    const tokenManager = new TokenManager(globalState as any);
+    const oauthFlow = {
+      execute: jest.fn().mockResolvedValue({
+        accessToken: 'sha256~token', // notsecret — test fixture only
+        expiresIn: 3600,
+      }),
+    };
+    const clusterDiscovery = {
+      discover: jest.fn()
+        .mockResolvedValueOnce(endpoints)
+        .mockResolvedValueOnce(secondEndpoints),
+    };
+
+    const provider = new OpenShiftAuthProvider(
+      { globalState, subscriptions: [] } as any,
+      tokenManager,
+      oauthFlow as any,
+      clusterDiscovery as any,
+    );
+
+    await provider.createSession([]);
+    expect(clusterDiscovery.discover).toHaveBeenCalledWith(apiUrl);
+
+    await globalState.update(STATE_CLUSTER_URL, secondDashboardUrl);
+    await globalState.update(CLUSTERS_STATE_KEY, [
+      { id: 'cluster-a', apiUrl, devSpacesUrl: dashboardUrl, appsDomain: endpoints.appsDomain },
+      { id: 'cluster-b', apiUrl: secondApiUrl, devSpacesUrl: secondDashboardUrl, appsDomain: secondEndpoints.appsDomain },
+    ]);
+
+    await provider.createSession([]);
+    expect(clusterDiscovery.discover).toHaveBeenCalledWith(secondApiUrl);
+    expect(oauthFlow.execute).toHaveBeenLastCalledWith(
+      secondEndpoints.oauthAuthorizeUrl,
+      secondEndpoints.oauthTokenUrl,
+    );
     tokenManager.dispose();
   });
 });

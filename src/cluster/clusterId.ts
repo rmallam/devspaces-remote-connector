@@ -1,12 +1,14 @@
 /**
  * Stable cluster id for a dashboard or API URL.
  *
- * A dedicated OpenShift apps domain uses the cluster name
- * (`devspaces.apps.devspc-1d.<shard>.p1.openshiftapps.com` → `devspc-1d`).
- * ROSA inserts a shared `rosa` label in front of that name
- * (`devspaces.apps.rosa.rosa-rwx5g.<shard>.p3.openshiftapps.com` → `rosa-rwx5g`).
- * Any other host, including two clusters behind one shared ingress, keeps
- * the full hostname so they are not stored as the same cluster.
+ * A standard OpenShift domain uses the cluster name
+ * (`devspaces.apps.devspc-1d.<shard>.p1.openshiftapps.com` → `devspc-1d`,
+ * `api.devspc-1d.<shard>.p1.openshiftapps.com` → `devspc-1d`).
+ * When a shared ingress adds a sub-label under `apps.` on a managed domain
+ * (`devspaces.apps.<ingress>.<cluster>.<shard>.p3.openshiftapps.com`), the
+ * cluster name is still `<cluster>` rather than the shared `<ingress>` label.
+ * Any other host, including clusters behind a custom shared ingress domain,
+ * keeps the full hostname so separate clusters do not collapse onto one id.
  */
 export function clusterIdFromUrl(url: string): string {
   let hostname = url.trim();
@@ -19,14 +21,9 @@ export function clusterIdFromUrl(url: string): string {
     return url;
   }
 
-  const rosa = hostname.match(/(?:^|\.)apps\.rosa\.([^.]+)\.[^.]+\.p\d+\.openshiftapps\.com$/);
-  if (rosa) {
-    return rosa[1];
-  }
-
-  const dedicated = hostname.match(/(?:^|\.)apps\.([^.]+)\.[^.]+\.p\d+\.openshiftapps\.com$/);
-  if (dedicated) {
-    return dedicated[1];
+  const appsMatch = hostname.match(/(?:^|\.)apps\.(?:[^.]+\.)?([^.]+)\.[^.]+\.p\d+\.openshiftapps\.com$/);
+  if (appsMatch) {
+    return appsMatch[1];
   }
 
   const api = hostname.match(/^api\.([^.]+)\.[^.]+\.p\d+\.openshiftapps\.com$/);
@@ -36,3 +33,4 @@ export function clusterIdFromUrl(url: string): string {
 
   return hostname;
 }
+

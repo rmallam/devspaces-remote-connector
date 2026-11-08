@@ -153,7 +153,7 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     await this.persistToken(token, clusterUrl);
 
     // Save the user's original URL for display purposes
-    this.context.globalState.update(STATE_CLUSTER_DISPLAY_URL, clusterUrl);
+    await this.context.globalState.update(STATE_CLUSTER_DISPLAY_URL, clusterUrl);
 
     const session = this.tokenToSession(token);
 
@@ -289,14 +289,19 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     clusterUrl: string,
     opts: { promptForApi?: boolean } = {},
   ): Promise<ClusterEndpoints> {
-    if (this.endpoints?.oauthAuthorizeUrl && this.endpoints.oauthTokenUrl && this.endpoints.apiUrl) {
+    const discoveryUrl = this.urlToDiscover(clusterUrl);
+    if (
+      this.endpoints?.oauthAuthorizeUrl &&
+      this.endpoints.oauthTokenUrl &&
+      this.endpoints.apiUrl &&
+      (storedUrlNamesCluster(discoveryUrl, this.endpoints) || storedUrlNamesCluster(clusterUrl, this.endpoints))
+    ) {
       return this.endpoints;
     }
 
-    const discoveryUrl = this.urlToDiscover(clusterUrl);
     try {
       this.endpoints = await this.clusterDiscovery.discover(discoveryUrl);
-      this.rememberApiUrl(clusterUrl, this.endpoints.apiUrl);
+      await this.rememberApiUrl(clusterUrl, this.endpoints);
       return this.endpoints;
     } catch (err) {
       if (opts.promptForApi === false) {
@@ -304,7 +309,7 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
       }
       const apiUrl = await this.promptForApiUrl(err);
       this.endpoints = await this.clusterDiscovery.discover(apiUrl);
-      this.rememberApiUrl(clusterUrl, this.endpoints.apiUrl);
+      await this.rememberApiUrl(clusterUrl, this.endpoints);
       return this.endpoints;
     }
   }
@@ -340,20 +345,26 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     return trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
   }
 
-  private rememberApiUrl(clusterUrl: string, apiUrl: string): void {
-    if (!apiUrl) {
+  private async rememberApiUrl(clusterUrl: string, endpoints: ClusterEndpoints): Promise<void> {
+    if (!endpoints.apiUrl) {
       return;
     }
     const clusters = this.context.globalState.get<KnownCluster[]>(CLUSTERS_STATE_KEY) ?? [];
     let changed = false;
     for (const cluster of clusters) {
-      if (storedUrlNamesCluster(clusterUrl, cluster) && cluster.apiUrl !== apiUrl) {
-        cluster.apiUrl = apiUrl;
-        changed = true;
+      if (storedUrlNamesCluster(clusterUrl, cluster)) {
+        if (cluster.apiUrl !== endpoints.apiUrl) {
+          cluster.apiUrl = endpoints.apiUrl;
+          changed = true;
+        }
+        if (endpoints.appsDomain && cluster.appsDomain !== endpoints.appsDomain) {
+          cluster.appsDomain = endpoints.appsDomain;
+          changed = true;
+        }
       }
     }
     if (changed) {
-      void this.context.globalState.update(CLUSTERS_STATE_KEY, clusters);
+      await this.context.globalState.update(CLUSTERS_STATE_KEY, clusters);
     }
   }
 
@@ -372,8 +383,8 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     return undefined;
   }
 
-  private storeClusterUrl(url: string): void {
-    this.context.globalState.update(STATE_CLUSTER_URL, url);
+  private async storeClusterUrl(url: string): Promise<void> {
+    await this.context.globalState.update(STATE_CLUSTER_URL, url);
   }
 
   /**
@@ -398,7 +409,7 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     for (const key of this.clusterTokenKeys(clusterUrl)) {
       await this.tokenManager.storeToken(key, { ...token, clusterUrl: key });
     }
-    this.storeClusterUrl(clusterUrl);
+    await this.storeClusterUrl(clusterUrl);
   }
 
   private async promptForClusterUrl(): Promise<string | undefined> {

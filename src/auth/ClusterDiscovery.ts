@@ -114,17 +114,12 @@ export class ClusterDiscovery {
     }
 
     const clusterDomain = hostname.slice('api.'.length);
-    // ROSA publishes routes on apps.rosa.<cluster>, not apps.<cluster>.
-    // A cluster name that merely begins with "rosa-" still needs that label.
-    const appsDomain = clusterDomain.endsWith('.openshiftapps.com') && !clusterDomain.startsWith('rosa.')
-      ? `apps.rosa.${clusterDomain}`
-      : `apps.${clusterDomain}`;
-    return `https://devspaces.${appsDomain}`;
+    return `https://devspaces.apps.${clusterDomain}`;
   }
 
   /**
    * Keep an API server URL the user pasted. Guessing the API from the apps
-   * domain drops the port and, on ROSA, the `apps.rosa` label.
+   * domain drops the port and fails when the dashboard is on a shared ingress.
    */
   resolveApiUrl(inputUrl: string, discoveredApiUrl: string): string {
     const normalized = this.normalizeInputUrl(inputUrl);

@@ -6,13 +6,13 @@ describe('clusterIdFromUrl', () => {
     expect(clusterIdFromUrl('https://api.devspc-1d.zs5b.p1.openshiftapps.com:6443')).toBe('devspc-1d');
   });
 
-  it('does not collapse two ROSA clusters onto the shared rosa label', () => {
-    const first = 'https://devspaces.apps.rosa.rosa-rwx5g.f8y9.p3.openshiftapps.com';
-    const second = 'https://devspaces.apps.rosa.rosa-wfnmw.xvzo.p3.openshiftapps.com';
+  it('does not collapse two clusters that share an ingress sub-label under apps.', () => {
+    const first = 'https://devspaces.apps.shared.cluster-a.f8y9.p3.openshiftapps.com';
+    const second = 'https://devspaces.apps.shared.cluster-b.xvzo.p3.openshiftapps.com';
 
-    expect(clusterIdFromUrl(first)).toBe('rosa-rwx5g');
-    expect(clusterIdFromUrl(second)).toBe('rosa-wfnmw');
-    expect(clusterIdFromUrl('https://api.rosa-rwx5g.f8y9.p3.openshiftapps.com:6443')).toBe('rosa-rwx5g');
+    expect(clusterIdFromUrl(first)).toBe('cluster-a');
+    expect(clusterIdFromUrl(second)).toBe('cluster-b');
+    expect(clusterIdFromUrl('https://api.cluster-a.f8y9.p3.openshiftapps.com:6443')).toBe('cluster-a');
   });
 
   it('keeps two shared-ingress dashboards as different clusters', () => {

@@ -29,15 +29,13 @@ describeLive('live Dev Spaces URL', () => {
       { encoding: 'utf8' },
     ).trim();
     const dashboard = `https://${routeHost}`;
-    const apiHost = new URL(apiServer).hostname;
-    const guessedFromApi = `https://devspaces.apps.${apiHost.slice('api.'.length)}`;
+    const guessedFromApi = new ClusterDiscovery().buildDevSpacesUrl(apiServer);
 
     const sources = await readDevSpacesUrlSources(ocReader());
     const chosen = chooseDevSpacesUrl(sources, guessedFromApi);
 
     expect(chosen).toEqual({ url: dashboard, source: 'che-cluster' });
     expect(chosen.url).not.toBe(guessedFromApi);
-    expect(new ClusterDiscovery().buildDevSpacesUrl(apiServer)).toBe(dashboard);
 
     await expect(lookup(new URL(guessedFromApi).hostname)).rejects.toThrow();
 

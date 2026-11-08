@@ -102,16 +102,6 @@ describe('ClusterDiscovery', () => {
       expect(discovery.buildDevSpacesUrl('https://api.cluster.example.com:6443'))
         .toBe('https://devspaces.apps.cluster.example.com');
     });
-
-    it('inserts the ROSA apps label when guessing from an API URL', () => {
-      expect(discovery.buildDevSpacesUrl('https://api.mycluster-01.abc1.p1.openshiftapps.com:443'))
-        .toBe('https://devspaces.apps.rosa.mycluster-01.abc1.p1.openshiftapps.com');
-    });
-
-    it('still inserts the ROSA apps label when the cluster name starts with rosa-', () => {
-      expect(discovery.buildDevSpacesUrl('https://api.rosa-example.f8y9.p3.openshiftapps.com:443'))
-        .toBe('https://devspaces.apps.rosa.rosa-example.f8y9.p3.openshiftapps.com');
-    });
   });
 
   describe('resolveApiUrl', () => {

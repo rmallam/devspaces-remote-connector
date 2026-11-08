@@ -198,12 +198,32 @@ function consoleLinkCandidates(items: unknown[]): string[] {
     if (typeof href !== 'string' || !href.trim()) {
       continue;
     }
-    const label = `${typeof name === 'string' ? name : ''} ${href}`.toLowerCase();
-    if (label.includes('che') || label.includes('devspaces') || label.includes('codeready')) {
-      hrefs.push(href.trim());
+    const linkName = typeof name === 'string' ? name.toLowerCase() : '';
+    const trimmedHref = href.trim();
+    const lowerHref = trimmedHref.toLowerCase();
+    if (isDevSpacesConsoleLink(linkName, lowerHref)) {
+      hrefs.push(trimmedHref);
     }
   }
   return hrefs;
+}
+
+function isDevSpacesConsoleLink(linkName: string, lowerHref: string): boolean {
+  if (
+    linkName.includes('devspaces') ||
+    linkName.includes('codeready') ||
+    lowerHref.includes('devspaces') ||
+    lowerHref.includes('codeready') ||
+    /(?:^|[-_.])che(?:$|[-_.])/.test(linkName)
+  ) {
+    return true;
+  }
+  try {
+    const host = new URL(lowerHref.includes('://') ? lowerHref : `https://${lowerHref}`).hostname;
+    return host.startsWith('che.');
+  } catch {
+    return false;
+  }
 }
 
 function firstPublicOrigin(urls: string[]): string | undefined {
@@ -227,7 +247,7 @@ function publicOrigin(url: string, allowApiHost: boolean): string | undefined {
   }
   try {
     const parsed = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    if (parsed.protocol !== 'https:') {
       return undefined;
     }
     if (!allowApiHost && parsed.hostname.startsWith('api.')) {

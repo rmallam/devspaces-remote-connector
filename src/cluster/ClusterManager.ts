@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { Logger } from '../util/Logger';
 import { ClusterDiscovery } from '../auth/ClusterDiscovery';
 import { STATE_CLUSTER_URL, STATE_CLUSTER_DISPLAY_URL } from '../constants';
-import { CLUSTERS_STATE_KEY } from '../kubernetes/knownApiUrl';
+import { CLUSTERS_STATE_KEY, storedUrlNamesCluster } from '../kubernetes/knownApiUrl';
 import { clusterIdFromUrl } from './clusterId';
 
 /**
@@ -81,7 +81,7 @@ export class ClusterManager {
     const storedUrl = this.globalState.get<string>(STATE_CLUSTER_URL);
     const allClusters = this.getClusters();
     if (allClusters.length > 0) {
-      if (!storedUrl || !allClusters.some((c) => c.devSpacesUrl === storedUrl)) {
+      if (!storedUrl || !allClusters.some((c) => storedUrlNamesCluster(storedUrl, c))) {
         await this.globalState.update(STATE_CLUSTER_URL, allClusters[0].devSpacesUrl);
         this.logger.info(`Set clusterUrl to ${allClusters[0].devSpacesUrl}`);
       }
@@ -97,12 +97,16 @@ export class ClusterManager {
 
   async addCluster(url: string, endpoints?: { apiUrl: string; devSpacesUrl: string; appsDomain: string }): Promise<ClusterEntry> {
     const normalizedUrl = this.normalizeUrl(url);
+    const discovery = new ClusterDiscovery();
+
+    // Preserve a pasted API server URL so sign-in does not have to guess it
+    // back from a provisional or shared-ingress dashboard URL.
+    const apiUrl = endpoints?.apiUrl || discovery.resolveApiUrl(normalizedUrl, '');
 
     // Derive proper devSpacesUrl from any URL format
     let devSpacesUrl = endpoints?.devSpacesUrl ?? normalizedUrl;
     let appsDomain = endpoints?.appsDomain ?? '';
     if (!endpoints) {
-      const discovery = new ClusterDiscovery();
       const extracted = discovery.extractAppsDomain(normalizedUrl);
       if (extracted) {
         appsDomain = extracted;
@@ -114,15 +118,19 @@ export class ClusterManager {
     const displayName = this.computeDisplayName(devSpacesUrl);
 
     const clusters = this.getClusters();
-    const existing = clusters.find((c) => c.id === id);
+    const existing = clusters.find((c) => c.id === id || (Boolean(apiUrl) && c.apiUrl === apiUrl));
     if (existing) {
+      if (apiUrl && existing.apiUrl !== apiUrl) {
+        existing.apiUrl = apiUrl;
+        await this.globalState.update(STORAGE_KEY, clusters);
+      }
       this.logger.info(`Cluster already registered: ${existing.displayName}`);
       return existing;
     }
 
     const entry: ClusterEntry = {
       id,
-      apiUrl: endpoints?.apiUrl ?? '',
+      apiUrl,
       devSpacesUrl,
       appsDomain,
       displayName,
@@ -153,6 +161,7 @@ export class ClusterManager {
     entry.apiUrl = endpoints.apiUrl;
     entry.devSpacesUrl = endpoints.devSpacesUrl;
     entry.appsDomain = endpoints.appsDomain;
+    entry.displayName = this.computeDisplayName(endpoints.devSpacesUrl);
     await this.globalState.update(STORAGE_KEY, clusters);
     this.logger.debug(`Cluster ${id} updated: api=${endpoints.apiUrl}, devspaces=${endpoints.devSpacesUrl}`);
   }
@@ -181,7 +190,12 @@ export class ClusterManager {
       const settingsClusters = config.get<string[]>('clusters', []);
       const filtered = settingsClusters.filter((u) => {
         const normalized = this.normalizeUrl(u);
-        return normalized !== removed.devSpacesUrl && normalized !== this.normalizeUrl(removed.devSpacesUrl);
+        return (
+          normalized !== removed.devSpacesUrl &&
+          normalized !== this.normalizeUrl(removed.devSpacesUrl) &&
+          !storedUrlNamesCluster(normalized, removed) &&
+          this.urlToId(normalized) !== removed.id
+        );
       });
       if (filtered.length !== settingsClusters.length) {
         await config.update('clusters', filtered, vscode.ConfigurationTarget.Global);
@@ -203,7 +217,6 @@ export class ClusterManager {
         return hostname;
       }
       // e.g. devspaces.apps.devspc02-1d.zs5b.p1.openshiftapps.com → devspaces@devspc02-1d
-      // ROSA keeps the cluster name, not the shared "rosa" label.
       const clusterName = clusterIdFromUrl(url);
       if (!clusterName.includes('.')) {
         return `devspaces@${clusterName}`;
@@ -232,8 +245,8 @@ export class ClusterManager {
 
   /**
    * Generate a stable ID from a URL.
-   * Dedicated OpenShift apps domains use the cluster name.
-   * ROSA and shared-ingress hosts must not share one id across clusters.
+   * Standard OpenShift apps domains use the cluster name.
+   * Shared-ingress hosts must not share one id across clusters.
    */
   urlToId(url: string): string {
     return clusterIdFromUrl(url);

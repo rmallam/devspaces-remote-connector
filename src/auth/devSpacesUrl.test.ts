@@ -14,7 +14,7 @@ describe('chooseDevSpacesUrl', () => {
     expect(chosen).toEqual({ url: SHARED, source: 'che-cluster' });
   });
 
-  it('uses spec.networking.hostname when status.cheURL is empty', () => {
+  it('accepts a custom CheCluster hostname that does not start with devspaces.', () => {
     const chosen = chooseDevSpacesUrl({
       cheUrls: ['https://workspaces.shared.example.com'],
       routeHosts: [],
@@ -25,6 +25,16 @@ describe('chooseDevSpacesUrl', () => {
       url: 'https://workspaces.shared.example.com',
       source: 'che-cluster',
     });
+  });
+
+  it('rejects non-https origins when selecting a dashboard URL', () => {
+    const chosen = chooseDevSpacesUrl({
+      cheUrls: ['http://devspaces.apps.shared.example.com'],
+      routeHosts: [],
+      consoleLinkHrefs: [SHARED],
+    }, DEFAULT_INGRESS);
+
+    expect(chosen).toEqual({ url: SHARED, source: 'console-link' });
   });
 
   it('uses the Dev Spaces route when the CheCluster cannot be read', () => {
@@ -146,6 +156,23 @@ describe('readDevSpacesUrlSources', () => {
       url: 'https://devspaces.shared.example.com',
       source: 'che-cluster',
     });
+  });
+
+  it('ignores unrelated console links whose name or href merely contains "che" as a substring', async () => {
+    const reader = fakeReader({
+      checlusters: { items: [] },
+      routes: { items: [] },
+      consolelinks: {
+        items: [
+          { metadata: { name: 'rancher-dashboard' }, spec: { href: 'https://rancher.apps.shared.example.com' } },
+          { metadata: { name: 'apache-docs' }, spec: { href: 'https://apache.apps.shared.example.com' } },
+          { metadata: { name: 'che' }, spec: { href: SHARED } },
+        ],
+      },
+    });
+
+    const sources = await readDevSpacesUrlSources(reader);
+    expect(sources.consoleLinkHrefs).toEqual([SHARED]);
   });
 });
 

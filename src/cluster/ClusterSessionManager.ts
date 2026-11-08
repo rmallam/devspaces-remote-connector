@@ -56,9 +56,11 @@ export class ClusterSessionManager {
     this.cleanupStaleManager(clusterId);
 
     try {
-      const { apiUrl, devSpacesUrl, appsDomain } = await this.resolveClusterEndpoints(clusterId, clusterUrl);
-      const accessToken = await this.getClusterToken(clusterId, devSpacesUrl, clusterUrl);
+      const entry = this.clusterManager.getClusters().find((c) => c.id === clusterId);
+      const accessToken = await this.getClusterToken(clusterId, entry?.devSpacesUrl ?? clusterUrl, clusterUrl);
       if (!accessToken) { return undefined; }
+
+      const { apiUrl, devSpacesUrl, appsDomain } = await this.resolveClusterEndpoints(clusterId, clusterUrl);
 
       const kubeConfig = this.kubeClientFactory.createConfig(apiUrl, accessToken);
       const resolvedDevSpacesUrl = await this.discoverDevSpacesUrl(kubeConfig, devSpacesUrl, {
@@ -69,6 +71,7 @@ export class ClusterSessionManager {
       }, clusterUrl);
 
       await this.clusterManager.updateCluster(clusterId, { apiUrl, devSpacesUrl: resolvedDevSpacesUrl, appsDomain });
+      this.treeProvider().setClusters(this.clusterManager.getClusters());
 
       const wm = this.createWorkspaceManager(kubeConfig, clusterId, resolvedDevSpacesUrl, accessToken);
       await this.initializeWorkspaces(wm, clusterId, resolvedDevSpacesUrl, clusterUrl);
@@ -283,7 +286,7 @@ export class ClusterSessionManager {
     // Migrate existing cluster URL if needed
     const existingUrl = this.authProvider.getStoredClusterUrl();
     if (existingUrl && clusters.length === 0) {
-      await this.clusterManager.addCluster(existingUrl);
+      await this.clusterManager.addCluster(existingUrl, this.authProvider.getEndpoints());
       tp.setClusters(this.clusterManager.getClusters());
     }
 
