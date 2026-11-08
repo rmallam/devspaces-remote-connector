@@ -6,6 +6,7 @@ import { ClusterTreeItem } from '../ui/WorkspaceTreeItem';
 import { TokenManager } from '../auth/TokenManager';
 import { OpenShiftAuthProvider } from '../auth/OpenShiftAuthProvider';
 import { storedUrlNamesCluster, tokenStorageKeys } from '../kubernetes/knownApiUrl';
+import { readCurrentKubeconfigSession, verifyOpenShiftToken } from '../kubernetes/kubeconfigImport';
 import { STATE_CLUSTER_URL, STATE_CLUSTER_DISPLAY_URL, STATE_ACTIVE_CONNECTION, CTX_AUTHENTICATED, CTX_CONNECTED } from '../constants';
 
 export interface ClusterCommandsDeps {
@@ -30,24 +31,61 @@ export function registerClusterCommands(deps: ClusterCommandsDeps): void {
   // --- Add Cluster ---
   context.subscriptions.push(
     vscode.commands.registerCommand('devspaces.addCluster', async () => {
-      const url = await vscode.window.showInputBox({
-        prompt: 'Enter any URL from your Dev Spaces cluster',
-        placeHolder: 'https://devspaces.example.com or https://devspaces.apps.cluster-name...',
-        ignoreFocusOut: true,
-        validateInput: (value) => {
-          const trimmed = value.trim();
-          if (!trimmed) {
-            return 'Please enter a URL';
+      let url: string | undefined;
+      let importedToken: { token: string; username: string } | undefined;
+
+      const kubeSession = readCurrentKubeconfigSession();
+      if (kubeSession?.apiUrl) {
+        const mode = await vscode.window.showQuickPick(
+          [
+            {
+              label: '$(terminal) Use current Kubeconfig / oc login context',
+              description: kubeSession.apiUrl,
+              detail: kubeSession.contextName ? `Context: ${kubeSession.contextName}` : undefined,
+              id: 'kubeconfig',
+            },
+            {
+              label: '$(edit) Enter cluster URL manually...',
+              description: 'Paste a Dev Spaces dashboard, console, or API server URL',
+              id: 'manual',
+            },
+          ],
+          { placeHolder: 'How would you like to add your OpenShift Dev Spaces cluster?', ignoreFocusOut: true },
+        );
+        if (!mode) {
+          return;
+        }
+        if (mode.id === 'kubeconfig') {
+          url = kubeSession.apiUrl;
+          if (kubeSession.token) {
+            const username = await verifyOpenShiftToken(kubeSession.apiUrl, kubeSession.token);
+            if (username) {
+              importedToken = { token: kubeSession.token, username };
+            }
           }
-          const toValidate = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
-          try {
-            new URL(toValidate);
-            return undefined;
-          } catch {
-            return 'Please enter a valid URL';
-          }
-        },
-      });
+        }
+      }
+
+      if (!url) {
+        url = await vscode.window.showInputBox({
+          prompt: 'Enter any URL from your Dev Spaces cluster',
+          placeHolder: 'https://devspaces.example.com or https://devspaces.apps.cluster-name...',
+          ignoreFocusOut: true,
+          validateInput: (value) => {
+            const trimmed = value.trim();
+            if (!trimmed) {
+              return 'Please enter a URL';
+            }
+            const toValidate = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+            try {
+              new URL(toValidate);
+              return undefined;
+            } catch {
+              return 'Please enter a valid URL';
+            }
+          },
+        });
+      }
       if (!url) {
         return;
       }
@@ -57,6 +95,19 @@ export function registerClusterCommands(deps: ClusterCommandsDeps): void {
       await context.globalState.update(STATE_CLUSTER_URL, entry.devSpacesUrl);
       await context.globalState.update(STATE_CLUSTER_DISPLAY_URL, entry.devSpacesUrl);
 
+      if (importedToken) {
+        const expiresAt = Date.now() + 24 * 60 * 60 * 1000;
+        for (const key of tokenStorageKeys(entry.devSpacesUrl, [entry])) {
+          await tokenManager.storeToken(key, {
+            accessToken: importedToken.token,
+            clusterUrl: key,
+            expiresAt,
+            username: importedToken.username,
+          });
+        }
+        await vscode.commands.executeCommand('setContext', CTX_AUTHENTICATED, true);
+      }
+
       const tp = treeProvider();
       if (tp) {
         tp.setClusters(clusterManager.getClusters());
@@ -64,11 +115,16 @@ export function registerClusterCommands(deps: ClusterCommandsDeps): void {
 
       await initCluster(entry.id, entry.devSpacesUrl);
 
-      vscode.window.showInformationMessage(
-        `Cluster added: ${entry.displayName}. Sign in to connect.`
-      );
-
-      vscode.commands.executeCommand('devspaces.signIn');
+      if (importedToken) {
+        vscode.window.showInformationMessage(
+          `Cluster added and signed in via kubeconfig as ${importedToken.username}: ${entry.displayName}`,
+        );
+      } else {
+        vscode.window.showInformationMessage(
+          `Cluster added: ${entry.displayName}. Sign in to connect.`
+        );
+        vscode.commands.executeCommand('devspaces.signIn');
+      }
     })
   );
 

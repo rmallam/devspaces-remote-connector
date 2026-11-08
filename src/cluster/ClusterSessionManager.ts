@@ -58,7 +58,10 @@ export class ClusterSessionManager {
     try {
       const entry = this.clusterManager.getClusters().find((c) => c.id === clusterId);
       const accessToken = await this.getClusterToken(clusterId, entry?.devSpacesUrl ?? clusterUrl, clusterUrl);
-      if (!accessToken) { return undefined; }
+      if (!accessToken) {
+        this.treeProvider().setClusterSignedOut(clusterId);
+        return undefined;
+      }
 
       const { apiUrl, devSpacesUrl, appsDomain } = await this.resolveClusterEndpoints(clusterId, clusterUrl);
 
@@ -82,6 +85,10 @@ export class ClusterSessionManager {
       this.logger.info(`Cluster ${clusterId} initialized with ${wm.getWorkspaces().length} workspaces`);
       return wm;
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized') || msg.includes('Forbidden')) {
+        this.treeProvider().setClusterSignedOut(clusterId);
+      }
       this.logger.warn(`Failed to initialize cluster ${clusterId}: ${err}`);
       return undefined;
     }
@@ -153,7 +160,7 @@ export class ClusterSessionManager {
   private createWorkspaceManager(kubeConfig: k8s.KubeConfig, clusterId: string, devSpacesUrl: string, accessToken: string): WorkspaceManager {
     const coreApi = kubeConfig.makeApiClient(k8s.CoreV1Api);
     const customApi = kubeConfig.makeApiClient(k8s.CustomObjectsApi);
-    const devWorkspaceApi = new DevWorkspaceApi(customApi, clusterId);
+    const devWorkspaceApi = new DevWorkspaceApi(customApi, clusterId, kubeConfig);
     const namespaceApi = new NamespaceApi(coreApi, customApi, devSpacesUrl, accessToken);
     const wm = new WorkspaceManager(devWorkspaceApi, namespaceApi);
     this.context.subscriptions.push(wm);

@@ -27,12 +27,12 @@ const DEFAULT_TOKEN_LIFETIME_MS = 60 * 60 * 1000;
  */
 export class TokenManager {
   private logger = Logger.getInstance();
-  private refreshTimer: NodeJS.Timeout | undefined;
-  private onTokenExpiringCallback: (() => Promise<void>) | undefined;
+  private refreshTimers = new Map<string, NodeJS.Timeout>();
+  private onTokenExpiringCallback: ((clusterUrl: string) => Promise<void>) | undefined;
 
   constructor(private globalState: vscode.Memento) {}
 
-  onTokenExpiring(callback: () => Promise<void>): void {
+  onTokenExpiring(callback: (clusterUrl: string) => Promise<void>): void {
     this.onTokenExpiringCallback = callback;
   }
 
@@ -56,16 +56,44 @@ export class TokenManager {
   }
 
   async getValidToken(keys: string[]): Promise<StoredToken | undefined> {
+    const primaryKey = keys.find((k) => Boolean(k?.trim()))?.trim();
     for (const key of keys) {
       if (!key) {
         continue;
       }
       const stored = await this.getToken(key);
       if (stored && this.isTokenValid(stored)) {
+        if (primaryKey && key !== primaryKey) {
+          const primaryStored = await this.getToken(primaryKey);
+          if (!primaryStored || !this.isTokenValid(primaryStored)) {
+            await this.storeToken(primaryKey, { ...stored, clusterUrl: primaryKey });
+          }
+        }
         return stored;
       }
     }
     return undefined;
+  }
+
+  /**
+   * Consolidate a cluster's token under its canonical key and remove redundant alias keys.
+   */
+  async consolidateTokenKeys(canonicalKey: string, aliasKeys: string[]): Promise<void> {
+    const target = canonicalKey.trim();
+    if (!target) {
+      return;
+    }
+    const valid = await this.getValidToken([target, ...aliasKeys]);
+    if (!valid) {
+      return;
+    }
+    await this.storeToken(target, { ...valid, clusterUrl: target });
+    for (const alias of aliasKeys) {
+      const trimmed = alias.trim();
+      if (trimmed && trimmed !== target) {
+        await this.deleteToken(trimmed);
+      }
+    }
   }
 
   /**
@@ -106,7 +134,7 @@ export class TokenManager {
     const key = this.keyFor(clusterUrl);
     await this.globalState.update(key, undefined);
     this.logger.debug(`Token deleted for ${clusterUrl}`);
-    this.cancelRefreshTimer();
+    this.cancelRefreshTimer(clusterUrl);
   }
 
   isTokenValid(token: StoredToken): boolean {
@@ -128,7 +156,8 @@ export class TokenManager {
   }
 
   private scheduleRefresh(token: StoredToken): void {
-    this.cancelRefreshTimer();
+    const timerKey = token.clusterUrl;
+    this.cancelRefreshTimer(timerKey);
 
     if (!token.expiresAt) {
       return;
@@ -137,8 +166,8 @@ export class TokenManager {
     const refreshIn = token.expiresAt - TOKEN_REFRESH_BUFFER - Date.now();
 
     if (refreshIn <= 0) {
-      this.logger.warn('Token is already within refresh window, triggering refresh now');
-      void this.triggerRefresh();
+      this.logger.warn(`Token for ${timerKey} is already within refresh window, triggering refresh now`);
+      void this.triggerRefresh(timerKey);
       return;
     }
 
@@ -148,13 +177,15 @@ export class TokenManager {
       `Token expires in ${expiresInSec}s, scheduling refresh in ${refreshInSec}s`
     );
 
-    this.refreshTimer = setTimeout(() => {
-      void this.triggerRefresh();
+    const timer = setTimeout(() => {
+      this.refreshTimers.delete(timerKey);
+      void this.triggerRefresh(timerKey);
     }, refreshIn);
+    this.refreshTimers.set(timerKey, timer);
   }
 
-  private async triggerRefresh(): Promise<void> {
-    this.logger.info('Background token refresh triggered');
+  private async triggerRefresh(clusterUrl: string): Promise<void> {
+    this.logger.info(`Background token refresh triggered for ${clusterUrl}`);
 
     if (!this.onTokenExpiringCallback) {
       this.logger.warn('No refresh callback registered — token will expire');
@@ -162,10 +193,10 @@ export class TokenManager {
     }
 
     try {
-      await this.onTokenExpiringCallback();
-      this.logger.info('Background token refresh completed');
+      await this.onTokenExpiringCallback(clusterUrl);
+      this.logger.info(`Background token refresh completed for ${clusterUrl}`);
     } catch (err) {
-      this.logger.error(`Background token refresh failed: ${err}`);
+      this.logger.error(`Background token refresh failed for ${clusterUrl}: ${err}`);
       const action = await vscode.window.showWarningMessage(
         'Dev Spaces session is about to expire. Sign in again to continue.',
         'Sign In'
@@ -176,11 +207,19 @@ export class TokenManager {
     }
   }
 
-  private cancelRefreshTimer(): void {
-    if (this.refreshTimer) {
-      clearTimeout(this.refreshTimer);
-      this.refreshTimer = undefined;
+  private cancelRefreshTimer(clusterUrl?: string): void {
+    if (clusterUrl !== undefined) {
+      const timer = this.refreshTimers.get(clusterUrl);
+      if (timer) {
+        clearTimeout(timer);
+        this.refreshTimers.delete(clusterUrl);
+      }
+      return;
     }
+    for (const timer of this.refreshTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.refreshTimers.clear();
   }
 
   dispose(): void {

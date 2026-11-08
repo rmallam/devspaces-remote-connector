@@ -45,5 +45,6 @@ jest.mock('vscode', () => ({
 jest.mock('@kubernetes/client-node', () => ({
   KubeConfig: jest.fn(),
   Exec: jest.fn(),
+  Watch: jest.fn(),
   V1Status: jest.fn(),
 }), { virtual: true });

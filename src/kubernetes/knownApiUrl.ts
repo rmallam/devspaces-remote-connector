@@ -1,3 +1,5 @@
+import { clusterIdFromUrl } from '../cluster/clusterId';
+
 /** globalState key for the cluster list. Kept in one place with ClusterManager. */
 export const CLUSTERS_STATE_KEY = 'devspaces.clusters';
 
@@ -82,6 +84,22 @@ export function tokenStorageKeys(
     add(lookupKnownApiUrl(clusters, clusterUrl, extraKeys));
   }
   return keys;
+}
+
+/**
+ * Canonical storage key for a cluster's token (prefers cluster ID).
+ */
+export function canonicalClusterTokenKey(
+  clusterUrl: string,
+  clusters: KnownCluster[] | undefined,
+  extraKeys: string[] = [],
+): string {
+  const cluster = clusters?.find((entry) => storedUrlNamesCluster(clusterUrl, entry, extraKeys));
+  if (cluster?.id) {
+    return cluster.id;
+  }
+  const apiUrl = lookupKnownApiUrl(clusters, clusterUrl, extraKeys);
+  return clusterIdFromUrl(apiUrl || clusterUrl) || clusterUrl.trim();
 }
 
 /**

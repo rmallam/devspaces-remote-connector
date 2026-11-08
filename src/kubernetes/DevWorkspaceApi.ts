@@ -27,7 +27,42 @@ export class DevWorkspaceApi {
     }
   }
 
-  constructor(private customApi: k8s.CustomObjectsApi, private clusterId: string) {}
+  constructor(
+    private customApi: k8s.CustomObjectsApi,
+    private clusterId: string,
+    private kubeConfig?: k8s.KubeConfig,
+  ) {}
+
+  async watch(
+    namespace: string,
+    onEvent: (type: string, workspace: WorkspaceModel) => void,
+    onError: (err: unknown) => void,
+  ): Promise<{ abort: () => void } | undefined> {
+    this.validateNamespace(namespace);
+    if (!this.kubeConfig || typeof k8s.Watch !== 'function') {
+      return undefined;
+    }
+    try {
+      const watcher = new k8s.Watch(this.kubeConfig);
+      const path = `/apis/${DW_API_GROUP}/${DW_API_VERSION}/namespaces/${namespace}/${DW_PLURAL}`;
+      const req = await watcher.watch(
+        path,
+        {},
+        (type: string, apiObj: DevWorkspaceResource) => {
+          if (apiObj?.metadata?.name) {
+            onEvent(type, this.toModel(apiObj, namespace));
+          }
+        },
+        (err: unknown) => {
+          onError(err);
+        },
+      );
+      return req;
+    } catch (err) {
+      onError(err);
+      return undefined;
+    }
+  }
 
   async list(namespace: string): Promise<WorkspaceModel[]> {
     this.validateNamespace(namespace);

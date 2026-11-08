@@ -1,4 +1,4 @@
-import { lookupKnownApiUrl, storedUrlNamesCluster, tokenStorageKeys } from './knownApiUrl';
+import { canonicalClusterTokenKey, lookupKnownApiUrl, storedUrlNamesCluster, tokenStorageKeys } from './knownApiUrl';
 
 const API = 'https://api.cluster.example.com:6443';
 const SHARED = 'https://devspaces.apps.shared.example.com';
@@ -38,6 +38,11 @@ describe('tokenStorageKeys', () => {
   it('still includes the API server when only the API URL was used at sign-in', () => {
     expect(tokenStorageKeys(API, clusters)).toContain(API);
     expect(tokenStorageKeys(API, clusters)).toContain(SHARED);
+  });
+
+  it('resolves the canonical cluster ID token key across shared ingress and API URLs', () => {
+    expect(canonicalClusterTokenKey(SHARED, clusters)).toBe('cluster');
+    expect(canonicalClusterTokenKey(API, clusters)).toBe('cluster');
   });
 });
 
