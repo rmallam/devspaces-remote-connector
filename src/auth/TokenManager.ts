@@ -56,16 +56,44 @@ export class TokenManager {
   }
 
   async getValidToken(keys: string[]): Promise<StoredToken | undefined> {
+    const primaryKey = keys.find((k) => Boolean(k?.trim()))?.trim();
     for (const key of keys) {
       if (!key) {
         continue;
       }
       const stored = await this.getToken(key);
       if (stored && this.isTokenValid(stored)) {
+        if (primaryKey && key !== primaryKey) {
+          const primaryStored = await this.getToken(primaryKey);
+          if (!primaryStored || !this.isTokenValid(primaryStored)) {
+            await this.storeToken(primaryKey, { ...stored, clusterUrl: primaryKey });
+          }
+        }
         return stored;
       }
     }
     return undefined;
+  }
+
+  /**
+   * Consolidate a cluster's token under its canonical key and remove redundant alias keys.
+   */
+  async consolidateTokenKeys(canonicalKey: string, aliasKeys: string[]): Promise<void> {
+    const target = canonicalKey.trim();
+    if (!target) {
+      return;
+    }
+    const valid = await this.getValidToken([target, ...aliasKeys]);
+    if (!valid) {
+      return;
+    }
+    await this.storeToken(target, { ...valid, clusterUrl: target });
+    for (const alias of aliasKeys) {
+      const trimmed = alias.trim();
+      if (trimmed && trimmed !== target) {
+        await this.deleteToken(trimmed);
+      }
+    }
   }
 
   /**
