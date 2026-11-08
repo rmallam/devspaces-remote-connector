@@ -3,7 +3,7 @@ import { Logger } from '../util/Logger';
 import { TokenManager, StoredToken } from './TokenManager';
 import { OAuthFlow } from './OAuthFlow';
 import { ClusterDiscovery, ClusterEndpoints } from './ClusterDiscovery';
-import { CLUSTERS_STATE_KEY, KnownCluster, lookupKnownApiUrl, tokenStorageKeys } from '../kubernetes/knownApiUrl';
+import { CLUSTERS_STATE_KEY, KnownCluster, lookupKnownApiUrl, storedUrlNamesCluster, tokenStorageKeys } from '../kubernetes/knownApiUrl';
 import { clusterIdFromUrl } from '../cluster/clusterId';
 import { getJson } from '../util/httpClient';
 import {
@@ -23,6 +23,7 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
   private sessionChangeEmitter = new vscode.EventEmitter<vscode.AuthenticationProviderAuthenticationSessionsChangeEvent>();
   private disposables: vscode.Disposable[] = [];
   private endpoints: ClusterEndpoints | undefined;
+  private reauthInFlight: Promise<string> | undefined;
 
   readonly onDidChangeSessions = this.sessionChangeEmitter.event;
 
@@ -41,34 +42,34 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
   }
 
   /**
-   * Silently re-authenticate by re-running the OAuth flow.
-   * Since the user is already SSO'd, the browser round-trip is near-instant.
+   * Re-run the OAuth flow. OpenShift CLI tokens have no refresh_token, so this
+   * opens the browser. SSO usually completes without a full login.
+   *
+   * Endpoints are rediscovered from the saved API URL — they are not kept in
+   * memory across VS Code restarts, which used to fail with "cannot refresh"
+   * and pushed people to Clear Auth.
    */
   private async silentReauthenticate(): Promise<void> {
-    if (!this.endpoints) {
-      throw new Error('No cluster endpoints — cannot refresh');
-    }
-
-    this.logger.info('Silently re-authenticating...');
-
-    const { accessToken, expiresIn } = await this.oauthFlow.execute(
-      this.endpoints.oauthAuthorizeUrl,
-      this.endpoints.oauthTokenUrl
-    );
-
     const clusterUrl = this.getStoredClusterUrl();
     if (!clusterUrl) {
       throw new Error('No cluster URL stored');
     }
 
-    const oldToken = await this.tokenManager.getValidToken(this.clusterTokenKeys(clusterUrl));
-    const lifetimeMs = expiresIn ? expiresIn * 1000 : 24 * 60 * 60 * 1000;
+    const endpoints = await this.ensureEndpoints(clusterUrl, { promptForApi: false });
 
+    this.logger.info('Silently re-authenticating...');
+
+    const { accessToken, expiresIn } = await this.oauthFlow.execute(
+      endpoints.oauthAuthorizeUrl,
+      endpoints.oauthTokenUrl
+    );
+
+    const lifetimeMs = expiresIn ? expiresIn * 1000 : 24 * 60 * 60 * 1000;
     const newToken: StoredToken = {
       accessToken,
       clusterUrl,
       expiresAt: Date.now() + lifetimeMs,
-      username: oldToken?.username,
+      username: await this.usernameFromStored(clusterUrl),
     };
 
     await this.persistToken(newToken, clusterUrl);
@@ -128,9 +129,8 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
       throw new Error('Sign-in cancelled: no cluster URL provided');
     }
 
-    // Discover cluster endpoints. A later reconnect stores the shared-ingress
-    // dashboard in place of the API URL the user typed; keep using that API.
-    this.endpoints = await this.clusterDiscovery.discover(this.urlToDiscover(clusterUrl));
+    // Discover against the saved API server, not the dashboard host.
+    this.endpoints = await this.ensureEndpoints(clusterUrl);
 
     // Execute OAuth authorization code flow with PKCE (same as `oc login --web`)
     const { accessToken, expiresIn } = await this.oauthFlow.execute(
@@ -176,11 +176,12 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     const clusterUrl = this.getStoredClusterUrl();
     if (clusterUrl) {
       const keys = this.clusterTokenKeys(clusterUrl);
-      const token = await this.tokenManager.getValidToken(keys);
+      const token = await this.tokenManager.getValidToken(keys)
+        ?? await this.firstStoredToken(clusterUrl);
+      for (const key of keys) {
+        await this.tokenManager.deleteToken(key);
+      }
       if (token) {
-        for (const key of keys) {
-          await this.tokenManager.deleteToken(key);
-        }
         const session = this.tokenToSession(token);
         this.sessionChangeEmitter.fire({
           added: [],
@@ -196,7 +197,7 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
 
   /**
    * Get the current access token, refreshing if needed.
-   * Throws if not authenticated.
+   * Expired / missing tokens start Sign In — do not Clear Auth.
    */
   async getAccessToken(): Promise<string> {
     const clusterUrl = this.getStoredClusterUrl();
@@ -205,12 +206,8 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
     }
 
     let token = await this.tokenManager.getValidToken(this.clusterTokenKeys(clusterUrl));
-    if (!token) {
-      throw new Error('No stored token. Please sign in again.');
-    }
 
-    // Refresh if needed
-    if (this.tokenManager.needsRefresh(token)) {
+    if (token && this.tokenManager.needsRefresh(token)) {
       try {
         await this.silentReauthenticate();
         const refreshed = await this.tokenManager.getValidToken(this.clusterTokenKeys(clusterUrl));
@@ -222,11 +219,19 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
       }
     }
 
-    if (!this.tokenManager.isTokenValid(token)) {
-      throw new Error('Token expired. Please sign in again.');
+    if (token && this.tokenManager.isTokenValid(token)) {
+      return token.accessToken;
     }
 
-    return token.accessToken;
+    this.logger.info('No valid OpenShift token; starting sign-in (Clear Auth is not required)');
+    if (!this.reauthInFlight) {
+      this.reauthInFlight = this.createSession([])
+        .then((session) => session.accessToken)
+        .finally(() => {
+          this.reauthInFlight = undefined;
+        });
+    }
+    return this.reauthInFlight;
   }
 
   /** Get the stored cluster URL. */
@@ -246,18 +251,24 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
       return;
     }
 
+    // Restore OAuth endpoints even when the token is already dead, so Sign In
+    // can reuse the saved API server instead of rediscovering the dashboard.
+    try {
+      this.endpoints = await this.ensureEndpoints(clusterUrl, { promptForApi: false });
+    } catch (err) {
+      this.logger.warn(`Failed to restore cluster endpoints: ${err}`);
+    }
+
     const token = await this.tokenManager.getValidToken(this.clusterTokenKeys(clusterUrl));
     if (!token) {
+      await vscode.commands.executeCommand('setContext', CTX_AUTHENTICATED, false);
+      this.logger.info(`Stored token missing or expired for ${clusterUrl} — Sign In, do not Clear Auth`);
       return;
     }
 
-    try {
-      this.endpoints = await this.clusterDiscovery.discover(this.urlToDiscover(clusterUrl));
-      await vscode.commands.executeCommand('setContext', CTX_AUTHENTICATED, true);
-      this.logger.info(`Restored session for ${clusterUrl}`);
-    } catch (err) {
-      this.logger.warn(`Failed to restore session: ${err}`);
-    }
+    this.tokenManager.armRefresh(token);
+    await vscode.commands.executeCommand('setContext', CTX_AUTHENTICATED, true);
+    this.logger.info(`Restored session for ${clusterUrl}`);
   }
 
   /**
@@ -268,6 +279,97 @@ export class OpenShiftAuthProvider implements vscode.AuthenticationProvider, vsc
   private urlToDiscover(clusterUrl: string): string {
     const clusters = this.context.globalState.get<KnownCluster[]>(CLUSTERS_STATE_KEY);
     return lookupKnownApiUrl(clusters, clusterUrl) || clusterUrl;
+  }
+
+  /**
+   * OAuth metadata for the OpenShift API. Never probe a shared-ingress
+   * dashboard when the API URL is already stored.
+   */
+  private async ensureEndpoints(
+    clusterUrl: string,
+    opts: { promptForApi?: boolean } = {},
+  ): Promise<ClusterEndpoints> {
+    if (this.endpoints?.oauthAuthorizeUrl && this.endpoints.oauthTokenUrl && this.endpoints.apiUrl) {
+      return this.endpoints;
+    }
+
+    const discoveryUrl = this.urlToDiscover(clusterUrl);
+    try {
+      this.endpoints = await this.clusterDiscovery.discover(discoveryUrl);
+      this.rememberApiUrl(clusterUrl, this.endpoints.apiUrl);
+      return this.endpoints;
+    } catch (err) {
+      if (opts.promptForApi === false) {
+        throw err;
+      }
+      const apiUrl = await this.promptForApiUrl(err);
+      this.endpoints = await this.clusterDiscovery.discover(apiUrl);
+      this.rememberApiUrl(clusterUrl, this.endpoints.apiUrl);
+      return this.endpoints;
+    }
+  }
+
+  private async promptForApiUrl(cause: unknown): Promise<string> {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    this.logger.warn(`Could not discover the API server: ${reason}`);
+    const input = await vscode.window.showInputBox({
+      prompt: 'Paste the OpenShift API server URL (https://api.<cluster>:6443). Sign in again — do not Clear Auth. The Dev Spaces dashboard is not the API.',
+      placeHolder: 'https://api.cluster.example.com:6443',
+      ignoreFocusOut: true,
+      validateInput: (value) => {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return 'Please enter the API server URL';
+        }
+        const toValidate = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+        try {
+          const parsed = new URL(toValidate);
+          if (parsed.protocol !== 'https:') {
+            return 'API URL must be https';
+          }
+          return undefined;
+        } catch {
+          return 'Please enter a valid URL';
+        }
+      },
+    });
+    if (!input) {
+      throw new Error('Sign-in cancelled: no API server URL provided');
+    }
+    const trimmed = input.trim();
+    return trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+  }
+
+  private rememberApiUrl(clusterUrl: string, apiUrl: string): void {
+    if (!apiUrl) {
+      return;
+    }
+    const clusters = this.context.globalState.get<KnownCluster[]>(CLUSTERS_STATE_KEY) ?? [];
+    let changed = false;
+    for (const cluster of clusters) {
+      if (storedUrlNamesCluster(clusterUrl, cluster) && cluster.apiUrl !== apiUrl) {
+        cluster.apiUrl = apiUrl;
+        changed = true;
+      }
+    }
+    if (changed) {
+      void this.context.globalState.update(CLUSTERS_STATE_KEY, clusters);
+    }
+  }
+
+  private async usernameFromStored(clusterUrl: string): Promise<string | undefined> {
+    const token = await this.firstStoredToken(clusterUrl);
+    return token?.username;
+  }
+
+  private async firstStoredToken(clusterUrl: string): Promise<StoredToken | undefined> {
+    for (const key of this.clusterTokenKeys(clusterUrl)) {
+      const stored = await this.tokenManager.getToken(key);
+      if (stored) {
+        return stored;
+      }
+    }
+    return undefined;
   }
 
   private storeClusterUrl(url: string): void {

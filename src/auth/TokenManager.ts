@@ -36,6 +36,11 @@ export class TokenManager {
     this.onTokenExpiringCallback = callback;
   }
 
+  /** Resume the expiry timer after VS Code restart. */
+  armRefresh(token: StoredToken): void {
+    this.scheduleRefresh(token);
+  }
+
   async storeToken(clusterUrl: string, token: StoredToken): Promise<void> {
     if (!token.expiresAt) {
       token.expiresAt = Date.now() + DEFAULT_TOKEN_LIFETIME_MS;

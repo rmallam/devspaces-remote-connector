@@ -2,6 +2,8 @@
 
 ## 0.10.2
 
+- Expired OpenShift tokens start Sign In (browser OAuth) instead of failing until Clear Auth. Restore the saved API server after a restart so re-login does not rediscover the dashboard.
+- If API discovery fails, prompt for the API URL and keep the cluster registration.
 - Use the Dev Spaces route host (`status.cheURL`) after API-server login instead of guessing `devspaces.` from the API name.
 - Keep the API server from sign-in when reconnecting through a shared ingress.
 - Update the active cluster URL only for the cluster that owns it.

@@ -100,6 +100,9 @@ export function registerAuthCommands(deps: AuthCommandsDeps): void {
           await tokenManager.deleteToken(cluster.devSpacesUrl);
           await tokenManager.deleteToken(cluster.id);
           await tokenManager.deleteToken(cluster.appsDomain);
+          if (cluster.apiUrl) {
+            await tokenManager.deleteToken(cluster.apiUrl);
+          }
         }
         const legacyUrl = context.globalState.get<string>(STATE_CLUSTER_URL);
         if (legacyUrl) {
