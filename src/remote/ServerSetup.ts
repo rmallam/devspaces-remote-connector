@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as k8s from '@kubernetes/client-node';
 import { Logger } from '../util/Logger';
 import { ServerConfig } from './ServerConfig';
+import { triggerBackgroundExtensionInstall } from './ExtensionInstaller';
 
 export interface ServerInstallResult {
   /** Connection token for authenticating to the REH server */
@@ -101,13 +102,25 @@ export async function installServerViaExec(
     `REH server ready: script=${result['serverScript']}, port=${listeningOn}, platform=${result['platform']}, arch=${result['arch']}`
   );
 
-  return {
+  const installResult: ServerInstallResult = {
     connectionToken,
     serverScript: result['serverScript'],
     listeningOn,
     platform: result['platform'] ?? 'linux',
     arch: result['arch'] ?? 'x64',
   };
+
+  void triggerBackgroundExtensionInstall(
+    kubeConfig,
+    namespace,
+    podName,
+    containerName,
+    installResult
+  ).catch((err) => {
+    logger.warn(`Background extension pre-install failed to start: ${err}`);
+  });
+
+  return installResult;
 }
 
 /**

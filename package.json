@@ -466,6 +466,29 @@
           "type": "boolean",
           "default": true,
           "description": "Whether to reject cluster SSL/TLS certificates that are invalid, expired or self-signed."
+        },
+        "devspaces.preinstallExtensions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically pre-install recommended and cluster-configured VS Code extensions in the background after connecting to a workspace."
+        },
+        "devspaces.defaultExtensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of VS Code extension IDs (`publisher.name` or `publisher.name@version`) or HTTPS `.vsix` URLs to pre-install in remote workspaces."
+        },
+        "devspaces.openVsxUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional HTTPS OpenVSX registry URL (for example, an Artifactory OpenVSX repository). When empty, automatically uses the cluster's configured openVSXURL or embedded Dev Spaces plugin registry."
+        },
+        "devspaces.vsixMirrorUrlTemplate": {
+          "type": "string",
+          "default": "",
+          "description": "Optional HTTPS URL template for downloading `.vsix` files from a generic artifact repository. Supports `${publisher}`, `${name}`, and `${version}` placeholders."
         }
       }
     }
