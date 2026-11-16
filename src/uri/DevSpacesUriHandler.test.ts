@@ -51,6 +51,14 @@ describe('parseHandoffUri', () => {
     });
   });
 
+  it('accepts a .code-workspace path from VSCODE_DEFAULT_WORKSPACE', () => {
+    const uri = makeUri(
+      '/open',
+      'dashboardUrl=https%3A%2F%2Fdevspaces.apps.ocp4.corp.example.com&workspace=che-demo-app&project=%2Fprojects%2Fche-demo-app%2Fche-demo.code-workspace'
+    );
+    expect(parseHandoffUri(uri)?.projectPath).toBe('/projects/che-demo-app/che-demo.code-workspace');
+  });
+
   it('parses custom shared-ingress CNAME + explicit apiUrl handoff URIs', () => {
     const uri = makeUri(
       '/open',

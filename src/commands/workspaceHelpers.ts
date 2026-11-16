@@ -82,15 +82,20 @@ export async function copyKiroAuthToPod(
 
 // ─── Project Folder Discovery ────────────────────────────────────────────────
 
+const SAFE_WORKSPACE_FILE_RE = /^\/[a-zA-Z0-9._/-]+\.code-workspace$/;
+
 /**
- * Discover the project folder inside a workspace pod.
+ * Discover the project folder or `.code-workspace` file inside a workspace pod.
  *
  * Strategy:
- * 1. Read the DevWorkspace CR to find sourceMapping
- * 2. Check if the sourceMapping directory exists
- * 3. If it has exactly one subdirectory, use that
- * 4. If the workspace has a git repo URL, match by repo name
- * 5. Fall back to the sourceMapping root or $HOME
+ * 1. Read the DevWorkspace CR and live Pod spec to find the main container,
+ *    `sourceMapping`, and optional `VSCODE_DEFAULT_WORKSPACE` env var
+ * 2. If `VSCODE_DEFAULT_WORKSPACE` points to an existing `.code-workspace` file
+ *    on the pod, return it so VS Code opens the multi-root workspace directly
+ * 3. Check if the `sourceMapping` directory exists
+ * 4. If it has exactly one subdirectory, use that
+ * 5. If the workspace has a git repo URL, match by repo name
+ * 6. Fall back to the `sourceMapping` root or `$HOME`
  */
 export async function discoverProjectFolder(
   kubeConfig: k8s.KubeConfig,
@@ -106,8 +111,9 @@ export async function discoverProjectFolder(
 
   const customApi = kubeConfig.makeApiClient(k8s.CustomObjectsApi);
   const dwName = pod.metadata?.labels?.['controller.devfile.io/devworkspace_name'] ?? workspace.name;
-  let mainContainerName = 'tools';
+  let configuredContainerName: string | undefined;
   let sourceMapping = PROJECTS_ROOT;
+  let defaultWorkspaceEnv: string | undefined;
 
   try {
     const dw = await customApi.getNamespacedCustomObject({
@@ -115,12 +121,46 @@ export async function discoverProjectFolder(
     }) as DevWorkspaceResource;
     for (const comp of dw?.spec?.template?.components ?? []) {
       if (comp.container && comp.container.mountSources !== false) {
-        mainContainerName = comp.name;
+        configuredContainerName = comp.name;
         if (comp.container.sourceMapping) { sourceMapping = comp.container.sourceMapping; }
+        const envHit = (comp.container as any).env?.find((e: any) => e?.name === 'VSCODE_DEFAULT_WORKSPACE');
+        if (typeof envHit?.value === 'string') {
+          defaultWorkspaceEnv = envHit.value.trim();
+        }
         break;
       }
     }
   } catch { /* use defaults */ }
+
+  const podContainers = pod.spec?.containers ?? [];
+  const nonSidecars = podContainers.filter((c) => !SIDECAR_PREFIXES.some((p) => c.name.startsWith(p)));
+  const resolvedContainer =
+    (configuredContainerName ? podContainers.find((c) => c.name === configuredContainerName) : undefined)
+    ?? nonSidecars.find((c) => c.volumeMounts?.some((vm) => vm.mountPath === PROJECTS_ROOT))
+    ?? nonSidecars[0]
+    ?? podContainers[0];
+  const mainContainerName = resolvedContainer?.name ?? configuredContainerName ?? 'tools';
+
+  if (!defaultWorkspaceEnv && resolvedContainer?.env) {
+    const podEnvHit = resolvedContainer.env.find((e) => e.name === 'VSCODE_DEFAULT_WORKSPACE');
+    if (podEnvHit?.value) {
+      defaultWorkspaceEnv = podEnvHit.value.trim();
+    }
+  }
+
+  if (
+    defaultWorkspaceEnv &&
+    SAFE_WORKSPACE_FILE_RE.test(defaultWorkspaceEnv) &&
+    !defaultWorkspaceEnv.includes('..')
+  ) {
+    try {
+      await execOnPod(kubeConfig, workspace.namespace, pod.metadata!.name!, mainContainerName, ['test', '-f', defaultWorkspaceEnv]);
+      Logger.getInstance().info(`Using VSCODE_DEFAULT_WORKSPACE: ${defaultWorkspaceEnv}`);
+      return defaultWorkspaceEnv;
+    } catch {
+      Logger.getInstance().debug(`VSCODE_DEFAULT_WORKSPACE file not found on pod: ${defaultWorkspaceEnv}`);
+    }
+  }
 
   let projectFolder = sourceMapping;
 
