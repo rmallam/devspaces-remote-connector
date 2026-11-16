@@ -141,6 +141,7 @@ export class DevSpacesResolver implements vscode.RemoteAuthorityResolver, vscode
     }
 
     const { podName, containerName } = await this.discoverPod(connInfo);
+    await this.persistConnectionState(connInfo);
     const { listeningOn, connectionToken } = await this.installREH(connInfo, podName, containerName);
     const localPort = await this.establishPortForward(connInfo.namespace, podName, listeningOn);
     this.registerLabelFormatter(hostAlias);
@@ -203,8 +204,9 @@ export class DevSpacesResolver implements vscode.RemoteAuthorityResolver, vscode
       if (!username) { throw new Error('Could not determine username'); }
 
       const coreApi = kc.makeApiClient(k8s.CoreV1Api);
-      const namespaceApi = new NamespaceApi(coreApi);
-      const ns = await namespaceApi.findUserNamespace(username);
+      const customApi = kc.makeApiClient(k8s.CustomObjectsApi);
+      const namespaceApi = new NamespaceApi(coreApi, customApi, connInfo.clusterUrl, token);
+      const ns = await namespaceApi.findUserNamespace(username, connInfo.workspaceName);
       if (ns) {
         connInfo.namespace = ns;
         this.logger.info(`Namespace discovered: ${ns}`);
@@ -213,6 +215,17 @@ export class DevSpacesResolver implements vscode.RemoteAuthorityResolver, vscode
       }
     } catch (err) {
       throw new Error(`Failed to discover namespace: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  private async persistConnectionState(connInfo: WorkspaceConnectionInfo): Promise<void> {
+    try {
+      await this.context.globalState.update(STATE_ACTIVE_CONNECTION, connInfo);
+      const connectionsMap = this.context.globalState.get<Record<string, WorkspaceConnectionInfo>>(STATE_CONNECTIONS_MAP, {}) ?? {};
+      connectionsMap[connInfo.hostAlias] = connInfo;
+      await this.context.globalState.update(STATE_CONNECTIONS_MAP, connectionsMap);
+    } catch (err) {
+      this.logger.debug(`Could not persist active connection state: ${err}`);
     }
   }
 

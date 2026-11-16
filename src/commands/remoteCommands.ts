@@ -267,9 +267,20 @@ export async function track(events: vscode.Event<any>[], logger: Logger, context
     return;
   }
 
+  const hasMachineExec = (pod.spec?.containers ?? []).some(
+    (c) => c.name.startsWith('che-machine-exec') || (c.ports ?? []).some((p) => p.containerPort === MACHINE_EXEC_PORT)
+  );
+  if (!hasMachineExec) {
+    logger.debug('Workspace pod has no che-machine-exec sidecar (desktop-only mode); skipping machine-exec activity port-forward.');
+    return;
+  }
+
   const forward = new k8s.PortForward(kubeConfig);
   const server = net.createServer((socket) => {
-    void forward.portForward(activeConn.namespace, podName, [MACHINE_EXEC_PORT], socket, null, socket);
+    socket.on('error', () => undefined);
+    void forward.portForward(activeConn.namespace, podName, [MACHINE_EXEC_PORT], socket, null, socket).catch(() => {
+      socket.destroy();
+    });
   });
 
   const localPort = await new Promise<number>((resolve, reject) => {

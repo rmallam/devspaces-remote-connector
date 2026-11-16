@@ -28,7 +28,8 @@
   "activationEvents": [
     "onView:devspacesWorkspaces",
     "onCommand:devspaces.signIn",
-    "onResolveRemoteAuthority:devspaces"
+    "onResolveRemoteAuthority:devspaces",
+    "onUri"
   ],
   "main": "./dist/extension.js",
   "extensionKind": [

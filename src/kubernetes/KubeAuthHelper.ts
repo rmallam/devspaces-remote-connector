@@ -168,11 +168,15 @@ export async function findWorkspacePodAndContainer(
     mainContainer = containers.find((c) => c.name === mainContainerName);
   }
 
-  // Fallback: first container that isn't a known sidecar
+  // Fallback: non-sidecar container mounting /projects, then first non-sidecar container
   if (!mainContainer) {
-    mainContainer = containers.find(
+    const nonSidecars = containers.filter(
       (c: k8s.V1Container) => !SIDECAR_PREFIXES.some((prefix) => c.name.startsWith(prefix))
-    ) ?? containers[0];
+    );
+    mainContainer =
+      nonSidecars.find((c) => c.volumeMounts?.some((vm) => vm.mountPath === '/projects'))
+      ?? nonSidecars[0]
+      ?? containers[0];
   }
 
   return {

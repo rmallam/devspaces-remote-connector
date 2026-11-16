@@ -2,6 +2,7 @@ import * as k8s from '@kubernetes/client-node';
 import { Logger } from '../util/Logger';
 import { request } from '../util/httpClient';
 import { ProjectList } from './DevWorkspaceTypes';
+import { DW_API_GROUP, DW_API_VERSION, DW_PLURAL } from '../constants';
 
 /**
  * Discovers the user's DevSpaces namespace.
@@ -23,13 +24,13 @@ export class NamespaceApi {
     private accessToken?: string
   ) {}
 
-  async findUserNamespace(username: string): Promise<string | undefined> {
+  async findUserNamespace(username: string, targetWorkspaceName?: string): Promise<string | undefined> {
     this.logger.info(`Looking for namespace for user: ${username}`);
 
     const result = await this.tryConventionalName(username)
       ?? await this.tryLowercaseConventionalName(username)
       ?? await this.tryDevSpacesApi(username)
-      ?? await this.tryProjectsApi(username)
+      ?? await this.tryProjectsApi(username, targetWorkspaceName)
       ?? await this.tryListNamespaces(username);
 
     if (result) {
@@ -127,7 +128,7 @@ export class NamespaceApi {
   /**
    * Strategy 4: OpenShift Projects API (user-scoped).
    */
-  private async tryProjectsApi(username: string): Promise<string | undefined> {
+  private async tryProjectsApi(username: string, targetWorkspaceName?: string): Promise<string | undefined> {
     if (!this.customApi) {
       this.logger.debug('[Strategy 4] No CustomObjectsApi, skipping');
       return undefined;
@@ -145,7 +146,11 @@ export class NamespaceApi {
       this.logger.debug(`[Strategy 4] Found ${projects.length} projects`);
 
       const lowerUsername = username.toLowerCase();
-      const prefix = `${lowerUsername}-devspaces`;
+      const sanitizedUsername = lowerUsername.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const prefixes = Array.from(new Set([
+        `${lowerUsername}-devspaces`,
+        `${sanitizedUsername}-devspaces`,
+      ]));
 
       for (const project of projects) {
         const name = project.metadata?.name as string | undefined;
@@ -157,9 +162,29 @@ export class NamespaceApi {
           return name;
         }
 
-        if (name.startsWith(prefix)) {
+        if (prefixes.some((p) => name.startsWith(p))) {
           this.logger.debug(`[Strategy 4] Found by prefix: ${name}`);
           return name;
+        }
+      }
+
+      if (targetWorkspaceName) {
+        for (const project of projects) {
+          const name = project.metadata?.name as string | undefined;
+          if (!name || name.startsWith('openshift-') || name.startsWith('kube-')) { continue; }
+          try {
+            await this.customApi.getNamespacedCustomObject({
+              group: DW_API_GROUP,
+              version: DW_API_VERSION,
+              namespace: name,
+              plural: DW_PLURAL,
+              name: targetWorkspaceName,
+            });
+            this.logger.debug(`[Strategy 4] Found workspace ${targetWorkspaceName} in project: ${name}`);
+            return name;
+          } catch {
+            // Workspace not in this project
+          }
         }
       }
 

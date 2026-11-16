@@ -13,8 +13,10 @@ import { WorkspaceTreeProvider } from './ui/WorkspaceTreeProvider';
 import { WorkspaceTreeItem } from './ui/WorkspaceTreeItem';
 import { StatusBarManager } from './ui/StatusBarManager';
 import { ClusterManager } from './cluster/ClusterManager';
+import { clusterIdFromUrl } from './cluster/clusterId';
 import { ClusterSessionManager } from './cluster/ClusterSessionManager';
 import { DevSpacesResolver } from './remote/DevSpacesResolver';
+import { DevSpacesUriHandler } from './uri/DevSpacesUriHandler';
 import { createGetKubeConfig, createFindPodAndContainer, createCheckAndStartWorkspace } from './remote/resolverCallbacks';
 import { registerRemoteCommands, ActiveConnectionInfo, track } from './commands/remoteCommands';
 import { registerWorkspaceCommands } from './commands/workspaceCommands';
@@ -108,12 +110,25 @@ function registerResolver(context: vscode.ExtensionContext): void {
         const parsed = parseHostAlias(hostAlias);
         if (parsed) {
           const clusters = resolverClusterManager.getClusters();
-          const cluster = clusters.find((c) => c.id === parsed.clusterId)
+          const targetId = parsed.clusterId.toLowerCase();
+          const cluster = clusters.find((c) => c.id.toLowerCase() === targetId)
             ?? clusters.find((c) => {
-              // Match by apps domain prefix (e.g. devspc-1d from apps.devspc-1d.ctyz...)
-              if (!c.appsDomain) { return false; }
-              const prefix = c.appsDomain.replace(/^apps\./, '').split('.')[0];
-              return prefix === parsed.clusterId;
+              if (c.devSpacesUrl && clusterIdFromUrl(c.devSpacesUrl).toLowerCase() === targetId) { return true; }
+              if (c.apiUrl && clusterIdFromUrl(c.apiUrl).toLowerCase() === targetId) { return true; }
+              if (c.appsDomain) {
+                const appsLabels = c.appsDomain.toLowerCase().replace(/^apps\./, '').split('.');
+                if (appsLabels[0] === targetId || appsLabels[1] === targetId) { return true; }
+              }
+              try {
+                const host = new URL(c.devSpacesUrl).hostname.toLowerCase();
+                if (host === targetId) { return true; }
+                const afterApps = host.split('.apps.')[1];
+                if (afterApps) {
+                  const segs = afterApps.split('.');
+                  if (segs[0] === targetId || segs[1] === targetId) { return true; }
+                }
+              } catch { /* ignore */ }
+              return false;
             });
           if (cluster) {
             return {
@@ -160,6 +175,20 @@ async function setupRemoteSession(context: vscode.ExtensionContext, effectiveRem
     vscode.authentication.registerAuthenticationProvider(
       AUTH_PROVIDER_ID, AUTH_PROVIDER_LABEL, authProvider,
       { supportsMultipleAccounts: false }
+    )
+  );
+
+  const remoteClusterManager = new ClusterManager(context.globalState);
+  const remoteKubeClientFactory = new KubeClientFactory();
+  context.subscriptions.push(
+    vscode.window.registerUriHandler(
+      new DevSpacesUriHandler({
+        context,
+        clusterManager: remoteClusterManager,
+        authProvider,
+        clusterDiscovery,
+        kubeClientFactory: remoteKubeClientFactory,
+      })
     )
   );
 
@@ -252,6 +281,22 @@ async function setupLocalSession(context: vscode.ExtensionContext): Promise<void
   );
 
   cleanupIntervalsFn = () => sessionManager.disposeIntervals();
+
+  context.subscriptions.push(
+    vscode.window.registerUriHandler(
+      new DevSpacesUriHandler({
+        context,
+        clusterManager,
+        authProvider,
+        clusterDiscovery,
+        kubeClientFactory,
+        onClusterRegistered: async () => {
+          treeProvider?.setClusters(clusterManager.getClusters());
+          await sessionManager.loadAllClusters();
+        },
+      })
+    )
+  );
 
   // --- Register commands ---
   registerAuthCommands({

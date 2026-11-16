@@ -27,6 +27,7 @@ jest.mock('vscode', () => ({
     showWarningMessage: jest.fn(),
     showQuickPick: jest.fn(),
     showInputBox: jest.fn(),
+    registerUriHandler: jest.fn(() => ({ dispose: jest.fn() })),
     createOutputChannel: jest.fn(() => ({
       appendLine: jest.fn(),
       show: jest.fn(),
@@ -38,6 +39,10 @@ jest.mock('vscode', () => ({
   },
   ConfigurationTarget: {
     Global: 1,
+  },
+  ProgressLocation: {
+    Window: 10,
+    Notification: 15,
   },
 }), { virtual: true });
 
