@@ -2,7 +2,7 @@
   "name": "devspaces-remote-connector",
   "displayName": "Dev Spaces Local/Remote Support",
   "description": "Connect to Red Hat OpenShift Dev Spaces workspaces with zero configuration. Manage workspace lifecycle, authenticate via OpenShift OAuth, and establish remote development sessions.",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "author": "Red Hat",
   "publisher": "redhat",
   "icon": "images/devspaces-icon.png",
