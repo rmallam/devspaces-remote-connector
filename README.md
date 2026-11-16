@@ -72,6 +72,10 @@ Add the extension ID to the `enable-proposed-api` array in your IDE's extension 
 | `devspaces.initialization.pollInterval` | `2` | Poll interval (seconds) for readiness check. |
 | `devspaces.initialization.namespaceAgeThreshold` | `300` | Namespace age threshold (seconds). Set to 0 to always check. |
 | `devspaces.certificateValidation.enabled` | `true` | Whether to reject cluster SSL/TLS certificates that are invalid, expired or self-signed. |
+| `devspaces.preinstallExtensions.enabled` | `true` | Automatically pre-install recommended and cluster-configured extensions in the background after connecting. |
+| `devspaces.defaultExtensions` | `[]` | Extension IDs (`publisher.name`, `publisher.name@version`) or HTTPS `.vsix` URLs to pre-install in remote workspaces. |
+| `devspaces.openVsxUrl` | `""` | Optional HTTPS OpenVSX registry URL (e.g. Artifactory OpenVSX). Defaults to the cluster's `CheCluster` `openVSXURL` or embedded plugin registry. |
+| `devspaces.vsixMirrorUrlTemplate` | `""` | Optional HTTPS `.vsix` mirror URL template supporting `${publisher}`, `${name}`, and `${version}`. |
 
 ## Commands
 
