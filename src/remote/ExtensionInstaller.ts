@@ -920,26 +920,93 @@ export async function remoteInstallerMain(
       }
     }
 
-    // 2. Discover workspace `.vscode/extensions.json` recommendations
+    // 2. Discover workspace `.vscode/extensions.json` and `*.code-workspace` recommendations
     const workspaceRecommendations: string[] = [];
     const unwantedSet = new Set<string>();
     const candidateFiles = new Set<string>();
+    const candidateWorkspaces = new Set<string>();
 
-    const envProjectSource = process.env.PROJECT_SOURCE;
-    if (envProjectSource && envProjectSource.startsWith('/')) {
-      candidateFiles.add(pathMod.join(envProjectSource, '.vscode', 'extensions.json'));
-    }
-    const projectsRoot = config.projectsRoot || '/projects';
-    if (fs.existsSync(projectsRoot)) {
-      candidateFiles.add(pathMod.join(projectsRoot, '.vscode', 'extensions.json'));
+    const collectCodeWorkspaceFiles = (dirPath: string) => {
       try {
-        for (const entry of fs.readdirSync(projectsRoot, { withFileTypes: true })) {
-          if (entry.isDirectory() && !entry.name.startsWith('.')) {
-            candidateFiles.add(pathMod.join(projectsRoot, entry.name, '.vscode', 'extensions.json'));
+        for (const item of fs.readdirSync(dirPath, { withFileTypes: true })) {
+          if (item.isFile() && item.name.endsWith('.code-workspace') && !item.name.startsWith('.')) {
+            candidateWorkspaces.add(pathMod.join(dirPath, item.name));
           }
         }
       } catch {
         // Ignore unreadable directories
+      }
+    };
+
+    const defaultWsEnv = (process.env.VSCODE_DEFAULT_WORKSPACE || '').trim();
+    if (defaultWsEnv.startsWith('/') && defaultWsEnv.endsWith('.code-workspace') && !defaultWsEnv.includes('..')) {
+      candidateWorkspaces.add(defaultWsEnv);
+    }
+
+    const envProjectSource = process.env.PROJECT_SOURCE;
+    if (envProjectSource && envProjectSource.startsWith('/')) {
+      candidateFiles.add(pathMod.join(envProjectSource, '.vscode', 'extensions.json'));
+      if (fs.existsSync(envProjectSource)) {
+        collectCodeWorkspaceFiles(envProjectSource);
+      }
+    }
+    const projectsRoot = config.projectsRoot || '/projects';
+    if (fs.existsSync(projectsRoot)) {
+      candidateFiles.add(pathMod.join(projectsRoot, '.vscode', 'extensions.json'));
+      collectCodeWorkspaceFiles(projectsRoot);
+      try {
+        for (const entry of fs.readdirSync(projectsRoot, { withFileTypes: true })) {
+          if (entry.isDirectory() && !entry.name.startsWith('.')) {
+            const subDir = pathMod.join(projectsRoot, entry.name);
+            candidateFiles.add(pathMod.join(subDir, '.vscode', 'extensions.json'));
+            collectCodeWorkspaceFiles(subDir);
+          }
+        }
+      } catch {
+        // Ignore unreadable directories
+      }
+    }
+
+    for (const wsFilePath of candidateWorkspaces) {
+      try {
+        if (!fs.existsSync(wsFilePath)) {
+          continue;
+        }
+        const stat = fs.lstatSync(wsFilePath);
+        if (!stat.isFile() || stat.size > 256 * 1024) {
+          continue;
+        }
+        const parsedWs = stripJsonc(fs.readFileSync(wsFilePath, 'utf8')) as Record<string, any>;
+        const wsExt = parsedWs?.extensions;
+        if (Array.isArray(wsExt?.unwantedRecommendations)) {
+          for (const u of wsExt.unwantedRecommendations) {
+            const spec = parseSpec(u);
+            if (spec?.kind === 'id' && spec.id) {
+              unwantedSet.add(spec.id);
+            }
+          }
+        }
+        if (Array.isArray(wsExt?.recommendations)) {
+          for (const r of wsExt.recommendations) {
+            if (typeof r === 'string') {
+              workspaceRecommendations.push(r);
+            }
+          }
+        }
+        if (Array.isArray(parsedWs?.folders)) {
+          const baseDir = pathMod.dirname(wsFilePath);
+          const normalizedRoot = pathMod.resolve(projectsRoot) + pathMod.sep;
+          for (const folder of parsedWs.folders) {
+            if (folder && typeof folder.path === 'string' && folder.path.trim()) {
+              const resolvedFolder = pathMod.resolve(baseDir, folder.path.trim());
+              if (resolvedFolder.startsWith(normalizedRoot)) {
+                candidateFiles.add(pathMod.join(resolvedFolder, '.vscode', 'extensions.json'));
+              }
+            }
+          }
+        }
+      } catch (err) {
+        log(`Skipping malformed ${wsFilePath}: ${err instanceof Error ? err.message : err}`);
       }
     }
 

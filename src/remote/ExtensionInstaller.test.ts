@@ -538,6 +538,75 @@ describe('ExtensionInstaller', () => {
       });
     });
 
+    it('discovers extensions.recommendations and multi-root folders from *.code-workspace and VSCODE_DEFAULT_WORKSPACE', async () => {
+      const repoDir = path.join(baseConfig.projectsRoot, 'che-demo-app');
+      const uiDir = path.join(baseConfig.projectsRoot, 'packages', 'ui-nested');
+      fs.mkdirSync(repoDir, { recursive: true });
+      fs.mkdirSync(path.join(uiDir, '.vscode'), { recursive: true });
+
+      const wsFile = path.join(repoDir, 'che-demo.code-workspace');
+      fs.writeFileSync(
+        wsFile,
+        `{
+          // Multi-root workspace config with comments
+          "folders": [
+            { "name": "app", "path": "." },
+            { "name": "ui", "path": "../packages/ui-nested" }
+          ],
+          "extensions": {
+            "recommendations": [
+              "redhat.vscode-yaml",
+              "unwanted.ext"
+            ],
+            "unwantedRecommendations": [
+              "unwanted.ext"
+            ]
+          }
+        }`
+      );
+      fs.writeFileSync(
+        path.join(uiDir, '.vscode', 'extensions.json'),
+        JSON.stringify({ recommendations: ['esbenp.prettier-vscode'] })
+      );
+
+      // Mark both expected extensions as already installed to verify discovery + unwanted filtering cleanly
+      for (const [dirName, pub, name, ver] of [
+        ['redhat.vscode-yaml-1.24.0', 'redhat', 'vscode-yaml', '1.24.0'],
+        ['esbenp.prettier-vscode-12.4.0', 'esbenp', 'prettier-vscode', '12.4.0'],
+      ]) {
+        const extDir = path.join(baseConfig.serverDataDir, 'extensions', dirName);
+        fs.mkdirSync(extDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(extDir, 'package.json'),
+          JSON.stringify({ publisher: pub, name, version: ver })
+        );
+      }
+
+      const prevEnv = process.env.VSCODE_DEFAULT_WORKSPACE;
+      process.env.VSCODE_DEFAULT_WORKSPACE = wsFile;
+      try {
+        const summary = await remoteInstallerMain(baseConfig, {
+          log: () => {},
+          serverConfigUrls: [],
+          fetchBuffer: async (url) => {
+            throw new Error(`Unexpected network fetch for ${url}`);
+          },
+          execServerCli: () => {},
+        });
+        expect(summary).toEqual({
+          installedVsixCount: 0,
+          skippedAlreadyInstalled: 2,
+          failedExtensions: [],
+        });
+      } finally {
+        if (prevEnv === undefined) {
+          delete process.env.VSCODE_DEFAULT_WORKSPACE;
+        } else {
+          process.env.VSCODE_DEFAULT_WORKSPACE = prevEnv;
+        }
+      }
+    });
+
     it('generates a self-contained CommonJS bundle with zero unbound outer references when executed in a fresh node process', () => {
       const installedDir = path.join(baseConfig.serverDataDir, 'extensions', 'redhat.vscode-yaml-1.24.0');
       fs.mkdirSync(installedDir, { recursive: true });
